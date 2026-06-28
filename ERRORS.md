@@ -1,10 +1,8 @@
-﻿# Dungeon Escape: Fix Log
+﻿# Tasks & Warnings
+## To-Do
+- Fix Wizard knockback percentage logic in `main.lua`.
+- Add safety checks for enemy `getCenter` calls.
+- Refactor `Knight:takeDamage` for `Push` system.
 
-A short list of resolved issues.
-
-- **Wizard spawn failure** — fixed wizard spawning so it only uses validated walkable tiles.
-- **Collision detection** — improved image-based collision and corner handling.
-- **Player spawn fallback** — added safer knight spawn selection.
-- **Rendering fixes** — unified `:render()` usage and added nil guards.
-- **Audio fixes** — corrected sound restart and boss attack timing.
-- **Damage logic** — fixed wizard attack timing and player damage handling.
+## Warnings
+- **Spawn Logic**: Check `dungeon.png` if spawn warnings appear.

@@ -1,4 +1,5 @@
 -- minimap.lua
+-- HUD Minimap
 local Class = require("system.class")
 local Minimap = Class.define()
 
@@ -27,8 +28,8 @@ local COL_LABEL      = { 0.85, 0.85, 0.85, 0.85 }
 local COL_KEY_HINT   = { 0.55, 0.55, 0.55, 0.70 }
 
 function Minimap:init(dungeon)
+    -- Setup
     self.dungeon    = dungeon
-    self.alpha      = 1
     self.mapCanvas  = nil
     self.position   = "top-right"
     self.player     = nil
@@ -36,14 +37,13 @@ function Minimap:init(dungeon)
     self.offsetX = 0
     self.offsetY = 0
     self.followPlayer = true
-    self.dragStartX = 0
-    self.dragStartY = 0
     self.scaleAnim  = MINIMAP_SCALE_SMALL
     self.pulse      = 0
     self:_buildCanvas()
 end
 
 function Minimap:_buildCanvas()
+    -- Build map image
     local d = self.dungeon
     if not d then return end
     local cw = d.width
@@ -70,6 +70,7 @@ function Minimap:_buildCanvas()
 end
 
 function Minimap:update(player, enemies, coins, camera, dt)
+    -- Update map data
     local d = self.dungeon
     if not d then return end
     self.player = player
@@ -79,22 +80,22 @@ function Minimap:update(player, enemies, coins, camera, dt)
     local mapW = d.width * sc
     local mapH = d.height * sc
     self.scaleAnim = MINIMAP_SCALE_SMALL
-    sc = MINIMAP_SCALE_SMALL
     self.pulse = (self.pulse or 0) + (dt or 0.016) * 3
+
+    -- Tracking
     if self.followPlayer and self.player then
         local px, py = self.player:getCenter()
         local targetOffsetX = (mapW / 2) - (px * sc)
         local targetOffsetY = (mapH / 2) - (py * sc)
         
-        local followSpeed = 10
-        self.offsetX = self.offsetX + (targetOffsetX - self.offsetX) * math.min(1, followSpeed * (dt or 0.016))
-        self.offsetY = self.offsetY + (targetOffsetY - self.offsetY) * math.min(1, followSpeed * (dt or 0.016))
+        self.offsetX, self.offsetY = targetOffsetX, targetOffsetY
     end
     self.offsetX = math.max(-(d.width * sc) + (mapW / 2), math.min(mapW / 2, self.offsetX))
     self.offsetY = math.max(-(d.height * sc) + (mapH / 2), math.min(mapH / 2, self.offsetY))
 end
 
 function Minimap:setPositionNext()
+    -- Corner cycle
     local order = {"top-right", "bottom-right", "bottom-left", "top-left"}
     local idx = 1
     for i, pos in ipairs(order) do
@@ -108,6 +109,7 @@ local function setCol(c, a)
 end
 
 function Minimap:draw()
+    -- Draw map UI
     if not self.mapCanvas then return end
     local d    = self.dungeon
     local sc   = self.scaleAnim
@@ -130,50 +132,41 @@ elseif self.position == "bottom-left" then
 end
 
 frameX = frameX + MINIMAP_OFFSET_X
-local frameW = mapW + MINIMAP_MARGIN * 2
-local frameH = mapH + MINIMAP_MARGIN * 2 + 22
 
     love.graphics.push("all")
     love.graphics.setBlendMode("alpha")
 
-    -- ── map area calculations ─────────────────────────────────────────────────
     local mapOriginX = frameX + MINIMAP_MARGIN
     local mapOriginY = frameY + 22 + MINIMAP_MARGIN
     local mapCircleX = mapOriginX + mapW / 2
     local mapCircleY = mapOriginY + mapH / 2
     local mapCircleRadius = (math.min(mapW, mapH) / 2) * 0.9
 
-    -- ── circular background & border ──────────────────────────────────────────
+    -- BG
     setCol(COL_BG_BORDER)
     love.graphics.circle("fill", mapCircleX, mapCircleY, mapCircleRadius + 2)
     setCol(COL_BG_INNER)
     love.graphics.circle("fill", mapCircleX, mapCircleY, mapCircleRadius)
 
-    -- ── label ─────────────────────────────────────────────────────────────────
-    local font = gFonts and gFonts["hud"]
     if font then
         love.graphics.setFont(font)
     end
     setCol(COL_LABEL)
     love.graphics.print("MINIMAP", frameX + MINIMAP_MARGIN, frameY + 4)
 
-    -- Apply stencil to make the map content circular
+    -- Circle mask
     love.graphics.stencil(function()
         love.graphics.circle("fill", mapCircleX, mapCircleY, mapCircleRadius)
     end, "replace", 1)
     love.graphics.setStencilTest("greater", 0)
 
-    -- ── Start Content Layer ──────────────────────────────────────────────────
-    
-    -- ── dungeon canvas ────────────────────────────────────────────────────────
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(self.mapCanvas, mapOriginX + self.offsetX, mapOriginY + self.offsetY, 0, sc, sc)
 
-    -- ── KM Boss blip ──────────────────────────────────────────────────────────
+    -- KM blip
     if self.enemies then
         for _, e in ipairs(self.enemies) do
-            -- Only draw the KM boss blip if they are alive
-            if e and e.name == "KM" and e.hp and e.hp > 0 then -- KM is now a boss
+            if e and e.name == "KM" and e.hp and e.hp > 0 then
                 local ex = mapOriginX + self.offsetX + (e.x + (e.w or 16) / 2) * sc
                 local ey = mapOriginY + self.offsetY + (e.y + (e.h or 16) / 2) * sc
                 setCol(COL_KM)
@@ -182,27 +175,23 @@ local frameH = mapH + MINIMAP_MARGIN * 2 + 22
         end
     end
 
-    -- ── player blip ───────────────────────────────────────────────────────────
+    -- Player blip
     if self.player then
         local bxCenter, byCenter = self.player:getCenter()
         local bx = mapOriginX + self.offsetX + bxCenter * sc
         local by = mapOriginY + self.offsetY + byCenter * sc
 
-        -- Outer glow pulse
         love.graphics.setColor(COL_PLAYER[1], COL_PLAYER[2], COL_PLAYER[3],
             0.3 + 0.2 * math.sin(self.pulse))
         love.graphics.circle("fill", bx, by, BLIP_PLAYER + 3)
 
-        -- Core dot
         setCol(COL_PLAYER)
         love.graphics.circle("fill", bx, by, BLIP_PLAYER)
 
-        -- White center pinpoint
         love.graphics.setColor(1, 1, 1, 0.9)
         love.graphics.circle("fill", bx, by, 1.5)
     end
 
-    -- Disable stencil after drawing map elements
     love.graphics.setStencilTest()
 
     love.graphics.pop()

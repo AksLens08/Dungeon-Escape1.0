@@ -1,13 +1,13 @@
 -- km.lua
+-- Main boss entity (Killer Master) with custom AI and sprites
 local Class = require("system.class")
 
 local KM = Class.define()
 
--- Hitbox size used for collision and spawning.
 KM.HITBOX_W = 15
 KM.HITBOX_H = 22
+-- Physics boundaries
 
--- Sprite sheets: KM_Walk = wandering, KM_Chase = chasing the player.
 local SPRITE_PATH_WALK  = "boss/KM_Walk.png"
 local SPRITE_PATH_CHASE = "boss/KM_Chase.png"
 local SPRITE_ROWS = 1
@@ -16,7 +16,6 @@ local DEFAULT_ANIMATION_SPEED = 0.10
 local TARGET_DRAW_HEIGHT = 60
 local CROP_PADDING = 4
 
--- Rows, columns, and frames are zero-based for quad math.
 local ANIMATIONS = {
     idle   = { row = 0, frames = 4, speed = DEFAULT_ANIMATION_SPEED },
     walk   = { row = 0, frames = 4, speed = 0.18 },
@@ -25,6 +24,7 @@ local ANIMATIONS = {
 }
 
 local function loadTexture(path)
+    -- Safe load
     if love.filesystem.getInfo(path) then
         return love.image.newImageData(path), love.graphics.newImage(path)
     end
@@ -32,6 +32,7 @@ local function loadTexture(path)
 end
 
 local function findVisibleBounds(imageData, left, top, width, height)
+    -- Alpha cropping
     local minX, minY = left + width, top + height
     local maxX, maxY = left, top
     local foundPixel = false
@@ -56,6 +57,7 @@ local function findVisibleBounds(imageData, left, top, width, height)
 end
 
 local function buildQuads(texture, imageData, frameWidth, frameHeight)
+    -- Generate cropped quads
     local quads = {}
     local imageWidth, imageHeight = texture:getDimensions()
     local maxFrameHeight = 1
@@ -75,6 +77,7 @@ local function buildQuads(texture, imageData, frameWidth, frameHeight)
 end
 
 function KM:init(x, y)
+    -- Init KM
     self.name = "KM"
     self.w, self.h = KM.HITBOX_W, KM.HITBOX_H
     self.x, self.y = x - self.w / 2, y - self.h / 2
@@ -87,20 +90,15 @@ function KM:init(x, y)
     self.mode = "wander"  -- "wander" or "chase"
     self.timer, self.frame = 0, 0
     self.deadAnimationComplete, self.hasHit = false, false
-    self.stunned, self.stunTimer = false, 0
-
-    -- Wander state: random movement direction that changes periodically.
     self.wanderDirX, self.wanderDirY = 1, 0
     self.wanderTimer, self.wanderInterval = 0, math.random(2, 4)
 
-    -- Load both sprite sheets.
     local walkImageData,  walkTexture  = loadTexture(SPRITE_PATH_WALK)
     local chaseImageData, chaseTexture = loadTexture(SPRITE_PATH_CHASE)
 
     self.walkTexture,  self.walkImageData  = walkTexture,  walkImageData
     self.chaseTexture, self.chaseImageData = chaseTexture, chaseImageData
 
-    -- Build quads for whichever sheets loaded.
     if self.walkTexture then
         local iw, ih = self.walkTexture:getDimensions()
         local fw, fh = math.floor(iw / SPRITE_COLUMNS), math.floor(ih / SPRITE_ROWS)
@@ -112,13 +110,13 @@ function KM:init(x, y)
         self.chaseQuads, self.chaseMaxH = buildQuads(self.chaseTexture, self.chaseImageData, fw, fh)
     end
 
-    -- Active texture/quads start on walk sheet.
     self:_applyModeSprite()
     self.animations = ANIMATIONS
     self:updateQuad()
 end
 
 function KM:_applyModeSprite()
+    -- Swap sprites
     if self.mode == "chase" and self.chaseTexture then
         self.texture  = self.chaseTexture
         self.quads    = self.chaseQuads
@@ -132,6 +130,7 @@ function KM:_applyModeSprite()
 end
 
 function KM:updateQuad()
+    -- Set frame
     if not self.texture or not self.quads then return end
     local anim = self.animations[self.state] or self.animations.idle
     local maxFrames = math.max(1, math.min(anim.frames, SPRITE_COLUMNS))
@@ -141,6 +140,7 @@ function KM:updateQuad()
 end
 
 function KM:takeDamage(amount)
+    -- HP and SFX
     if self.hp <= 0 then return end
     self.hp = self.hp - amount
     if Audio and not Audio:isPlaying("knight_hurt") then
@@ -149,6 +149,7 @@ function KM:takeDamage(amount)
 end
 
 function KM:update(dt, player, map)
+    -- KM Logic
     if self.hp <= 0 then
         if self.state ~= "death" then
             self.state, self.frame, self.timer = "death", 0, 0
@@ -158,23 +159,12 @@ function KM:update(dt, player, map)
         return
     end
 
-    if self.stunned then
-        self.stunTimer = self.stunTimer - dt
-        if self.stunTimer <= 0 then
-            self.stunned = false
-            self.stunTimer = 0
-        end
-        self.state = "idle"
-        self:updateAnimation(dt, player)
-        return
-    end
-
     local centerX, centerY = self.x + self.w / 2, self.y + self.h / 2
     local playerCenterX, playerCenterY = player.x + player.w / 2, player.y + player.h / 2
     local dx, dy = playerCenterX - centerX, playerCenterY - centerY
     local dist = math.sqrt(dx * dx + dy * dy)
 
-    -- Switch between wander and chase modes based on vision range.
+    -- Mode toggle
     local prevMode = self.mode
     if dist <= self.visionRange then
         self.mode = "chase"
@@ -190,7 +180,7 @@ function KM:update(dt, player, map)
     local nextState
 
     if self.mode == "chase" then
-        -- Chase: move directly toward the player.
+        -- Pursuit
         if dist < self.attackRange then
             nextState = "attack"
         else
@@ -201,7 +191,7 @@ function KM:update(dt, player, map)
             moveX, moveY = moveX * mag, moveY * mag
         end
     else
-        -- Wander: roam randomly, changing direction every wanderInterval seconds.
+        -- Roam
         self.wanderTimer = self.wanderTimer + dt
         if self.wanderTimer >= self.wanderInterval then
             self.wanderTimer = 0
@@ -215,6 +205,7 @@ function KM:update(dt, player, map)
     end
 
     if nextState == "walk" and (moveX ~= 0 or moveY ~= 0) then
+        -- Movement
         local spd = (self.mode == "chase") and self.chaseSpeed or (self.speed * 0.5)
         local vx, vy = moveX * spd * dt, moveY * spd * dt
         local moved = false
@@ -226,7 +217,6 @@ function KM:update(dt, player, map)
             self.y = self.y + vy
             moved = true
         end
-        -- Bounce wander direction off walls.
         if self.mode == "wander" and not moved then
             local angle = math.random() * math.pi * 2
             self.wanderDirX = math.cos(angle)
@@ -245,12 +235,14 @@ function KM:update(dt, player, map)
 end
 
 function KM:updateAnimation(dt, player)
+    -- Animation
     self.timer = self.timer + dt
     local anim = self.animations[self.state] or self.animations.idle
     local maxFrames = math.max(1, math.min(anim.frames, SPRITE_COLUMNS))
 
     if self.timer > anim.speed then
         self.timer = 0
+        -- Capture
         if self.state == "attack" and self.frame == 1 and not self.hasHit then
             local centerX, centerY = self.x + self.w / 2, self.y + self.h / 2
             local px, py = player:getCenter()

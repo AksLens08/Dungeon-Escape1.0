@@ -1,0 +1,208 @@
+-- skeleton_spearman.lua
+local Push = require("push")
+local SkeletonSpearman = {}
+SkeletonSpearman.__index = SkeletonSpearman
+
+SkeletonSpearman.HITBOX_W = 20
+SkeletonSpearman.HITBOX_H = 30
+
+function SkeletonSpearman:new(x, y)
+    local self = setmetatable({}, SkeletonSpearman)
+    self.w, self.h = SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H
+    self.x, self.y = x - self.w / 2, y - self.h / 2
+
+    self.hp, self.maxHp = 45, 45
+    self.speed = 50
+    self.damage = 15
+    self.state = "idle"
+    self.previousState = "idle"
+    self.direction = "left"
+    self.timer, self.frame = 0, 0
+    self.invuln = 0
+    self.attackCooldown = 0
+    self.deadAnimationComplete = false
+    self.hasHit = false
+    
+    self.visionRange = 250
+    self.attackRange = 55 -- Longer reach than warrior (35)
+
+    self.animations = {
+        idle   = { frames = 7, speed = 0.12 },
+        walk   = { frames = 7, speed = 0.10 },
+        attack = { frames = 4, speed = 0.07 },
+        death  = { frames = 5, speed = 0.15 }
+    }
+    
+    self.targetHeight = 50
+    self.displayScale = 1.0
+    self:updateTexture()
+    return self
+end
+
+function SkeletonSpearman:updateTexture()
+    local texKey = "skeleton_spearman_" .. self.state
+    local texture = gTextures[texKey]
+    local anim = self.animations[self.state]
+
+    if not texture or not anim then
+        texture = gTextures["skeleton_spearman_idle"]
+        anim = self.animations.idle
+    end
+
+    self.texture = texture
+    if self.texture then
+        local sw, sh = self.texture:getDimensions()
+        self.frameWidth = sw / anim.frames
+        self.frameHeight = sh
+        self.displayScale = self.targetHeight / self.frameHeight
+        self.frame = self.frame % anim.frames
+        self.quad = love.graphics.newQuad(self.frame * self.frameWidth, 0, self.frameWidth, self.frameHeight, sw, sh)
+    end
+end
+
+function SkeletonSpearman:update(dt, player, dungeon)
+    if self.invuln > 0 then self.invuln = self.invuln - dt end
+
+    if self.hp <= 0 then
+        if self.state ~= "death" then
+            self.state = "death"
+        end
+    elseif self.attackCooldown > 0 then
+        self.attackCooldown = self.attackCooldown - dt
+    end
+
+    if self.state ~= self.previousState then
+        self.frame, self.timer = 0, 0
+        self.previousState = self.state
+        self:updateTexture()
+    end
+
+    if self.state == "attack" then
+        -- Improved attack movement: wind-up and tracking lunge
+        local px, py = player:getCenter()
+        local sx, sy = self:getCenter()
+        local dy = py - sy
+
+        if self.frame <= 1 then
+            -- Wind up: Move slightly back away from the direction we are facing
+            local windupSpeed = self.speed * 0.5
+            local moveX = (self.direction == "right" and -1 or 1) * windupSpeed * dt
+            self:move(moveX, 0, dungeon)
+        elseif self.frame >= 2 and self.frame < 4 then
+            -- Thrust forward with high speed and slight Y tracking
+            local thrustSpeed = self.speed * 2.2
+            local moveX = (self.direction == "right" and 1 or -1) * thrustSpeed * dt
+            local moveY = (math.abs(dy) > 5) and (dy > 0 and 1 or -1) * (self.speed * 0.4) * dt or 0
+            self:move(moveX, moveY, dungeon)
+        end
+    elseif self.state ~= "death" then
+        local px, py = player:getCenter()
+        local sx, sy = self:getCenter()
+        local dx, dy = px - sx, py - sy
+        local dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist < self.visionRange and dungeon:hasLineOfSight(sx, sy, px, py) then
+            self.direction = dx > 0 and "right" or "left"
+            if dist < self.attackRange and self.attackCooldown <= 0 then
+                self.state = "attack"
+                self.frame, self.timer = 0, 0
+                self.hasHit = false
+                self:updateTexture()
+                if Audio then Audio:play("sword_slice") end
+            elseif dist > self.attackRange then
+                self.state = "walk"
+                local angle = math.atan2(dy, dx)
+                self:move(math.cos(angle) * self.speed * dt, math.sin(angle) * self.speed * dt, dungeon)
+            else
+                self.state = "idle"
+            end
+        else
+            self.state = "idle"
+        end
+    end
+
+    self:handleAnimation(dt, player)
+end
+
+function SkeletonSpearman:handleAnimation(dt, player)
+    self.timer = self.timer + dt
+    local anim = self.animations[self.state] or self.animations.idle
+    if self.timer > anim.speed then
+        self.timer = 0
+
+        if self.state == "attack" and self.frame == 3 and not self.hasHit then
+            local px, py = player:getCenter()
+            local sx, sy = self:getCenter()
+            local dx, dy = px - sx, py - sy
+            local distSq = dx*dx + dy*dy
+            if distSq < (self.attackRange + 10)^2 then
+                player:takeDamage(self.damage)
+                Push.execute(self, player, 15, 0.8)
+                self.hasHit = true
+            end
+        end
+
+        if self.state == "death" then
+            if self.frame < anim.frames - 1 then
+                self.frame = self.frame + 1
+            else
+                self.deadAnimationComplete = true
+                -- Maintain the final frame for the corpse rendering
+            end
+        else
+            if self.frame < anim.frames - 1 then
+                self.frame = self.frame + 1
+            else
+                if self.state == "attack" then 
+                    self.state = "idle"
+                    self.attackCooldown = 2.0
+                end
+                self.frame = 0
+            end
+        end
+        self:updateTexture()
+    end
+end
+
+function SkeletonSpearman:move(dx, dy, dungeon)
+    if not dungeon then return end
+    local steps = math.ceil(math.max(math.abs(dx), math.abs(dy)) / 2)
+    if steps == 0 then return end
+    local stepX, stepY = dx / steps, dy / steps
+
+    for i = 1, steps do
+        if not dungeon:isColliding(self.x + stepX, self.y, self.w, self.h) then
+            self.x = self.x + stepX
+        end
+        if not dungeon:isColliding(self.x, self.y + stepY, self.w, self.h) then
+            self.y = self.y + stepY
+        end
+    end
+end
+
+function SkeletonSpearman:takeDamage(amount, attacker, dungeon)
+    if self.hp > 0 then
+        self.hp = self.hp - amount
+        self.invuln = 0.5
+        local pushDx, pushDy = Push.execute(attacker, self, 15, 0.5, false)
+        if pushDx and pushDy then
+            self:move(pushDx, pushDy, dungeon)
+        end
+    end
+end
+
+function SkeletonSpearman:getCenter() return self.x + self.w / 2, self.y + self.h / 2 end
+
+function SkeletonSpearman:render()
+    if self.deadAnimationComplete or not self.texture then return end
+    local scaleX = (self.direction == "right" and 1 or -1) * self.displayScale
+    local pivotX, pivotY = self.x + self.w / 2, self.y + self.h
+    love.graphics.setColor(1, 1, 1)
+    if self.invuln > 0 then 
+        love.graphics.setColor(1, 0.4, 0.4) 
+    end
+    love.graphics.draw(self.texture, self.quad, pivotX, pivotY, 0, scaleX, self.displayScale, self.frameWidth / 2, self.frameHeight)
+    love.graphics.setColor(1, 1, 1)
+end
+
+return SkeletonSpearman

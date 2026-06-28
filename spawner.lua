@@ -1,8 +1,9 @@
 -- spawner.lua
--- Handles validating and generating safe enemy spawn positions
+-- Spawn helper
 local Spawner = {}
 
 local function isValidFloorTile(dungeon, x, y)
+    -- Check tile
     if not dungeon or not dungeon.collisionMap then
         return false
     end
@@ -18,6 +19,7 @@ local function isValidFloorTile(dungeon, x, y)
 end
 
 function Spawner.getValidSpawnPoint(dungeon, w, h, padding, maxAttempts)
+    -- Find valid spot
     if not dungeon or not dungeon.walkableTiles or #dungeon.walkableTiles == 0 then
         return nil, nil
     end

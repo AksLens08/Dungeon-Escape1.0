@@ -1,21 +1,24 @@
 -- knight.lua
+-- Melee player
 local Class = require("system.class")
+local Push = require("push")
 local Knight = Class.define()
 Knight.HITBOX_W = 20
 Knight.HITBOX_H = 30
 
 function Knight:init(x, y)
-    -- Collision box covers the visible knight body, not just the feet.
+    -- Setup stats
     self.w, self.h = Knight.HITBOX_W, Knight.HITBOX_H
-    -- Set spawn position (default to middle if none given)
     self.x = (x or 0) - self.w / 2
     self.y = (y or 0) - self.h / 2
 
     self.hp, self.maxHp, self.armor, self.damage, self.coins = 100, 100, 100, 20, 0
-    self.invuln, self.hasKey = 0, false
-        self.hpRegenTimer = 0
-        self.hpRegenInterval = 2.5
-    self.dx, self.dy, self.speed = 0, 0, 85
+    self.baseDamage, self.buffTimer = 20, 0
+    self.invuln = 0
+    self.hpRegenTimer = 0
+    self.hpRegenInterval = 2.5
+    self.dx, self.dy, self.speed = 0, 0, 70
+    self.stamina, self.maxStamina = 100, 100
     self.slideSide = nil
     self.state, self.previousState, self.direction = "idle", "idle", "right"
     self.attackVariant = nil
@@ -23,47 +26,45 @@ function Knight:init(x, y)
     self.attackTimer, self.attackCooldown = 0, 0
     self.deadAnimationComplete = false
 
-    -- Animation settings
+    self.growthTimer = 0
     self.frameWidth, self.frameHeight = 128, 128
-    self.animationFrames = { idle = 4, walk = 8, attack = 5, hurt = 2, death = 6, defend = 1 }
-    self.animationSpeeds = { idle = 0.12, walk = 0.08, attack = 0.07, hurt = 0.1, death = 0.15, defend = 0.1 }
+    -- animationFrames will be dynamically updated by updateTexture
+    self.animationSpeeds = {
+        idle = 0.12, walk = 0.08, run = 0.06, attack = 0.07, run_attack = 0.06,
+        hurt = 0.1, death = 0.15, defend = 0.1
+    }
     self.lightCenters = {
         idle = { x = 33, y = 95.5 },
         walk = { x = 32.5, y = 95.5 },
+        run = { x = 32.5, y = 95.5 }, -- Assuming similar pivot to walk
         attack = { x = 54, y = 95.5 },
+        run_attack = { x = 54, y = 95.5 }, -- Assuming similar pivot to attack
         hurt = { x = 37.5, y = 98 },
         death = { x = 35, y = 98.5 },
         defend = { x = 33, y = 95.5 }
     }
 
     self.displayScale, self.visualOffsetX = 1.0, 0
-    self.visualScaleX = 1
-    self:updateTexture()
 end
 
 function Knight:updateTexture()
+    -- Select sprite
     local texKey = "knight_" .. self.state
-    if self.state == "attack" then
-        if self.attackVariant then
-            texKey = "knight_" .. self.attackVariant
-        else
-            texKey = "knight_attack"
-        end
-    end
     self.texture = gTextures[texKey] or gTextures["knight_idle"]
 
     if self.texture then
         local sw, sh = self.texture:getDimensions()
         local maxFrames = math.max(1, math.floor(sw / self.frameWidth))
-        self.animationFrames[self.state] = maxFrames
+        if not self.animationFrames then self.animationFrames = {} end -- Ensure table exists
+        self.animationFrames[self.state] = maxFrames -- Dynamically update frame count for current state
         self.frame = self.frame % maxFrames
-        -- Scale it so it's roughly 60px high
         self.displayScale = 60 / self.frameHeight
         self.quad = love.graphics.newQuad(self.frame * self.frameWidth, 0, self.frameWidth, self.frameHeight, sw, sh)
     end
 end
 
 function Knight:tryMoveStep(map, stepX, stepY)
+    -- Wall slide
     if not map:isColliding(self.x + stepX, self.y + stepY, self.w, self.h) then
         self.x = self.x + stepX
         self.y = self.y + stepY
@@ -118,6 +119,7 @@ function Knight:tryMoveStep(map, stepX, stepY)
 end
 
 function Knight:moveWithCollision(map, amountX, amountY)
+    -- Physics move
     local steps = math.max(1, math.ceil(math.max(math.abs(amountX), math.abs(amountY))))
     local stepX = amountX / steps
     local stepY = amountY / steps
@@ -137,6 +139,7 @@ function Knight:moveWithCollision(map, amountX, amountY)
 end
 
 function Knight:update(dt, map, gMouse)
+    -- Knight logic
     if self.invuln > 0 then self.invuln = self.invuln - dt end
     if self.attackCooldown > 0 then self.attackCooldown = self.attackCooldown - dt end
 
@@ -144,33 +147,53 @@ function Knight:update(dt, map, gMouse)
         self.state = "death"
         self.dx, self.dy = 0, 0
     else
-        -- Armor regeneration logic
-            -- Health regeneration logic (replaces previous armor regen)
-            if self.hp < self.maxHp then
-                self.hpRegenTimer = self.hpRegenTimer + dt
-                if self.hpRegenTimer >= self.hpRegenInterval then
-                    self:heal(10) -- Regenerate 10 HP
-                    self.hpRegenTimer = 0
+        if self.buffTimer > 0 then
+            self.buffTimer = self.buffTimer - dt
+            if self.buffTimer <= 0 then
+                self.damage = self.baseDamage
             end
         end
 
-        -- Check movement keys
-        local inputX, inputY = 0, 0
-        if not (gMouse and gMouse.rightDown) then
-            if love.keyboard.isDown("w", "up") then inputY = -1 end
-            if love.keyboard.isDown("s", "down") then inputY = 1 end
-            if love.keyboard.isDown("a", "left") then inputX, self.direction = -1, "left" end
-            if love.keyboard.isDown("d", "right") then inputX, self.direction = 1, "right" end
+        if self.hp < self.maxHp then
+            self.hpRegenTimer = self.hpRegenTimer + dt
+            if self.hpRegenTimer >= self.hpRegenInterval then
+                self:heal(10) -- Regenerate 10 HP
+                self.hpRegenTimer = 0
+            end
         end
 
-        -- Fix diagonal speed
-        local mag = (inputX ~= 0 and inputY ~= 0) and 0.7071 or 1
-        local targetDx = inputX * self.speed * mag
-        local targetDy = inputY * self.speed * mag
+        -- Input
+        local moveX, moveY = 0, 0
+        local isShiftDown = love.keyboard.isDown("lshift", "rshift")
+        if not (gMouse and gMouse.rightDown) then
+            if love.keyboard.isDown("w", "up") then moveY = moveY - 1 end
+            if love.keyboard.isDown("s", "down") then moveY = moveY + 1 end
+            if love.keyboard.isDown("a", "left") then moveX = moveX - 1 end
+            if love.keyboard.isDown("d", "right") then moveX = moveX + 1 end
+        end
 
-        -- Smooth movement
-        local isStopping = (inputX == 0 and inputY == 0)
-        local weight = isStopping and 12 or 20
+        if moveX ~= 0 then
+            self.direction = (moveX > 0) and "right" or "left"
+        end
+
+        local isMoving = (moveX ~= 0 or moveY ~= 0)
+        local canRun = isShiftDown and self.stamina > 0 and isMoving
+        local currentSpeed = self.speed
+
+        if canRun then
+            currentSpeed = self.speed * 1.6 -- Running speed multiplier
+            self.stamina = math.max(0, self.stamina - 25 * dt) -- Stamina drain per second
+        else
+            self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt) -- Stamina regeneration
+        end
+
+        local mag = (moveX ~= 0 and moveY ~= 0) and 0.7071 or 1 -- Diagonal movement speed reduction
+        local targetDx = moveX * currentSpeed * mag
+        local targetDy = moveY * currentSpeed * mag
+
+        local isStopping = (moveX == 0 and moveY == 0)
+        local isTurning = (moveX > 0 and self.dx < 0) or (moveX < 0 and self.dx > 0)
+        local weight = isTurning and 45 or (isStopping and 12 or 20)
         
         local lerpFactor = 1 - math.exp(-weight * dt)
         self.dx = self.dx + (targetDx - self.dx) * lerpFactor
@@ -178,43 +201,40 @@ function Knight:update(dt, map, gMouse)
         if isStopping and math.abs(self.dx) < 1 then self.dx = 0 end
         if isStopping and math.abs(self.dy) < 1 then self.dy = 0 end
 
-        -- Figure out what the player is doing
+        -- States
         if self.invuln > 0.7 then
             self.state = "hurt"
         elseif (gMouse and gMouse.rightDown) then
             self.state = "defend"
-        elseif (gMouse and gMouse.leftDown) and self.attackCooldown <= 0 then
-            self.state = "attack"
-            if inputX ~= 0 or inputY ~= 0 then
-                self.attackVariant = "run_attack"
-            else
-                local variants = {"attack", "attack2", "attack3"}
-                self.attackVariant = variants[math.random(#variants)]
+        elseif self.attackTimer > 0 then -- If an attack is in progress, maintain its state.
+            -- This ensures the animation plays out unless interrupted by higher priority states (hurt/defend).
+            -- The state was already set to "attack" or "run_attack" when the attack started.
+            -- No explicit state change needed here, as self.state should already be correct.
+            -- This block effectively "locks" the state to the current attack state.
+        elseif (gMouse and gMouse.leftDown) and self.attackCooldown <= 0 then -- Only allow new attack if not already attacking
+            local canRunAttack = isShiftDown and self.stamina >= 15
+            self.state = canRunAttack and "run_attack" or "attack"
+            if canRunAttack then
+                self.stamina = math.max(0, self.stamina - 15) -- Chunk cost for run attack
             end
-            if self.attackTimer <= 0 then self.attackTimer = 0.35 end
+            self.attackTimer = 0.35
             Audio:play("sword_slice")
-            self.attackCooldown = 1 -- Cooldown aligned with enemy hurt animation (0.35s)
-        elseif self.attackTimer > 0 then
-            self.state = "attack"
-        elseif inputX ~= 0 or inputY ~= 0 then
-            self.state = "walk"
-        else
-            self.state = "idle"
-        end
+            self.attackCooldown = 1
+        elseif canRun then self.state = "run"
+        elseif isMoving then self.state = "walk"
+        else self.state = "idle" end
+    end -- End of if self.hp <= 0 else block
+    if self.state == "attack" or self.state == "run_attack" then 
+        self.attackTimer = self.attackTimer - dt 
     end
 
-    if self.state == "attack" then self.attackTimer = self.attackTimer - dt end
-
-    -- Reset frame if we changed state
     if self.state ~= self.previousState then
         self.frame, self.timer = 0, 0
         self.previousState = self.state
-        if self.state ~= "attack" then
-            self.attackVariant = nil
-        end
         self:updateTexture()
     end
 
+    -- Animation
     self.timer = self.timer + dt
     local frameDuration = self.animationSpeeds[self.state] or 0.1
     local maxFrames = self.animationFrames[self.state] or 1
@@ -234,10 +254,7 @@ function Knight:update(dt, map, gMouse)
         self:updateTexture()
     end
 
-    self.visualScaleX = (self.direction == "right" and 1 or -1) * self.displayScale
-
-    -- Handle footstep sounds based on movement state
-    if self.state == "walk" and self.hp > 0 then
+    if (self.state == "walk" or self.state == "run") and self.hp > 0 then
         if not Audio:isPlaying("footsteps") then
             Audio:play("footsteps")
         end
@@ -248,19 +265,17 @@ function Knight:update(dt, map, gMouse)
     self:moveWithCollision(map, self.dx * dt, self.dy * dt)
 end
 
-function Knight:takeDamage(amount)
-    -- Play shield.mp3 if in defend state
-    if self.state == "defend" then
-        Audio:play("shield_hit") 
+function Knight:takeDamage(amount, attacker, dungeon)
+    -- Shielding
+    if self.state == "defend" or love.mouse.isDown(2) then
+        Audio:play("shield_hit")
         return
     end
 
-    -- Only take damage if not currently invulnerable
     if self.invuln <= 0 and self.hp > 0 then
-        -- Damage reduces armor first
+        local hpBefore = self.hp
         if self.armor > 0 then
             self.armor = self.armor - amount
-            -- If armor is depleted by this hit, carry over remaining damage to HP
             if self.armor < 0 then
                 self.hp = self.hp + self.armor -- Adding negative armor to HP
                 self.armor = 0
@@ -269,8 +284,21 @@ function Knight:takeDamage(amount)
             self.hp = self.hp - amount
         end
 
-        self.invuln = 0.8 -- This triggers the "hurt" state visual and prevents spamming
-        Audio:play("knight_hurt") -- Play taking_damage.mp3
+        if self.hp < hpBefore then
+            Audio:play("hurt")
+        else
+            Audio:play("knight_hurt")
+        end
+
+        self.invuln = 0.8
+
+        -- Knockback
+        if attacker and type(attacker) == "table" then
+            local pushDx, pushDy = Push.execute(attacker, self, 15, 0.5, false)
+            if pushDx and pushDy and dungeon then
+                self:moveWithCollision(dungeon, pushDx, pushDy)
+            end
+        end
     end
 end
 
@@ -278,7 +306,9 @@ function Knight:heal(amount)
     self.hp = math.min(self.maxHp, self.hp + amount)
 end
 
-function Knight:handleInput(key)
+function Knight:applyAttackBuff(duration)
+    self.buffTimer = duration
+    self.damage = self.baseDamage * 2
 end
 
 function Knight:getCenter()
@@ -286,6 +316,7 @@ function Knight:getCenter()
 end
 
 function Knight:getLightPosition()
+    -- Light offset
     local pivotX = self.x + self.w / 2
     local pivotY = self.y + self.h
     local center = self.lightCenters[self.state] or self.lightCenters.idle
@@ -295,36 +326,79 @@ function Knight:getLightPosition()
 end
 
 function Knight:drawHUD()
-    local sw = love.graphics.getWidth()
-    local barW, barH = 200, 20
+    -- Draw UI
+    local barW, barH = 260, 28
     local margin = 20
 
     love.graphics.setFont(gFonts["hud"])
 
-    -- Draw HP Bar (Red)
-    love.graphics.setColor(0.2, 0, 0, 0.8)
-    love.graphics.rectangle("fill", margin, margin, barW, barH)
-    love.graphics.setColor(1, 0, 0)
-    love.graphics.rectangle("fill", margin, margin, barW * (self.hp / 100), barH)
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("HP: " .. math.ceil(self.hp), margin, margin - 20)
+    local function drawMedievalBar(x, y, current, max, label, color, subLabel)
+        -- 1. Outer Border
+        love.graphics.setColor(0.05, 0.05, 0.05, 1)
+        love.graphics.rectangle("fill", x - 4, y - 4, barW + 8, barH + 8)
+        love.graphics.setColor(0.3, 0.3, 0.35, 1)
+        love.graphics.setLineWidth(2)
+        love.graphics.rectangle("line", x - 4, y - 4, barW + 8, barH + 8)
 
-    -- Draw Armor Bar (Blue)
-    love.graphics.setColor(0, 0, 0.2, 0.8)
-    love.graphics.rectangle("fill", margin, margin + 40, barW, barH)
-    love.graphics.setColor(0, 0.6, 1)
-    love.graphics.rectangle("fill", margin, margin + 40, barW * (self.armor / 100), barH)
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("ARMOR: " .. math.ceil(self.armor), margin, margin + 20)
-    love.graphics.print("COINS: " .. self.coins, margin, margin + 62)
+        -- 2. Corner Rivets
+        love.graphics.setColor(0.5, 0.5, 0.5, 1)
+        love.graphics.circle("fill", x - 4, y - 4, 3)
+        love.graphics.circle("fill", x + barW + 4, y - 4, 3)
+        love.graphics.circle("fill", x - 4, y + barH + 4, 3)
+        love.graphics.circle("fill", x + barW + 4, y + barH + 4, 3)
+
+        -- 3. Stone Background
+        love.graphics.setColor(0.15, 0.15, 0.15, 1)
+        love.graphics.rectangle("fill", x, y, barW, barH)
+
+        -- 4. The Fill
+        local percent = math.max(0, current / max)
+        love.graphics.setColor(color[1], color[2], color[3], 1)
+        love.graphics.rectangle("fill", x, y, barW * percent, barH)
+
+        -- 5. Medieval Bevel
+        love.graphics.setColor(0, 0, 0, 0.3)
+        love.graphics.rectangle("fill", x, y + barH * 0.7, barW * percent, barH * 0.3)
+        love.graphics.setColor(1, 1, 1, 0.15)
+        love.graphics.rectangle("fill", x, y, barW * percent, 4)
+
+        -- 6. Text
+        love.graphics.setColor(0.8, 0.7, 0.5, 1)
+        love.graphics.print(label, x, y - 22)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.printf(math.ceil(current) .. " " .. subLabel, x, y + 4, barW, "center")
+    end
+
+    -- Draw Health
+    local hpX, hpY = margin + 5, margin + 25
+    drawMedievalBar(hpX, hpY, self.hp, self.maxHp, "HEALTH", {0.6, 0.1, 0.1}, "/ " .. self.maxHp)
+
+    -- Draw Armor
+    local armX, armY = margin + 5, hpY + barH + 35
+    drawMedievalBar(armX, armY, self.armor, 100, "ARMOR", {0.1, 0.4, 0.7}, "/ 100")
+
+    -- Draw Stamina
+    local staX, staY = margin + 5, armY + barH + 35
+    drawMedievalBar(staX, staY, self.stamina, self.maxStamina, "STAMINA", {0.2, 0.6, 0.2}, "/ " .. self.maxStamina)
+
+    -- Coin Counter
+    love.graphics.setColor(0, 0, 0, 0.6)
+    love.graphics.rectangle("fill", margin, staY + barH + 15, 140, 30, 4)
+    love.graphics.setColor(0.9, 0.8, 0.5, 1)
+    love.graphics.print("COINS: " .. (self.coins or 0) .. " / 20", margin + 10, staY + barH + 20)
+    
+    love.graphics.setLineWidth(1)
 end
 
 function Knight:render()
-    -- Pivot points for drawing
+    -- Draw Knight
     local pivotX = self.x + self.w / 2
     local pivotY = self.y + self.h
+    local center = self.lightCenters[self.state] or self.lightCenters.idle
 
-    -- Flash/Change color based on state
+    local drawScale = self.displayScale * (self.growthTimer > 0 and 1.5 or 1)
+    local scaleX = (self.direction == "right" and 1 or -1) * drawScale
+
     if self.hp <= 0 then
         love.graphics.setColor(0.3, 0, 0)
     elseif self.attackTimer > 0 then
@@ -337,10 +411,8 @@ function Knight:render()
     end
 
     if self.texture and self.quad then
-        local center = self.lightCenters[self.state] or self.lightCenters.idle
-        love.graphics.draw(self.texture, self.quad, pivotX, pivotY, 0, self.visualScaleX, self.displayScale, center.x, self.frameHeight)
+        love.graphics.draw(self.texture, self.quad, pivotX, pivotY, 0, scaleX, drawScale, center.x, self.frameHeight)
     else
-        -- Backup box if image is missing
         local size = 16
         local centerY = math.floor(self.y + self.h / 2)
         love.graphics.rectangle("fill", pivotX - size / 2, centerY - size / 2, size, size)

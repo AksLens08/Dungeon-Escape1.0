@@ -1,10 +1,11 @@
 -- dungeon.lua
+-- Map and collisions
 local Class = require("system.class")
 local Dungeon = Class.define()
 
 function Dungeon:init(imagePath, tileSize)
     assert(imagePath, "You must provide a valid image path")
-    self.tileSize = tileSize or 32
+    self.tileSize = tileSize or 32 
     self.gridSize = self.tileSize / 4
     self.imageData = love.image.newImageData(imagePath)
     self.texture = love.graphics.newImage(self.imageData)
@@ -13,10 +14,10 @@ function Dungeon:init(imagePath, tileSize)
 
     self.collisionMap = {}
     self.walkableTiles = {}
-    self.wallTiles = {}
     local tilesX = math.floor(self.width / self.gridSize)
     local tilesY = math.floor(self.height / self.gridSize)
 
+    -- Build collision grid
     for ty = 1, tilesY do
         self.collisionMap[ty] = {}
         for tx = 1, tilesX do
@@ -27,21 +28,21 @@ function Dungeon:init(imagePath, tileSize)
             midY = math.max(0, math.min(midY, self.height - 1))
 
             local r, g, b, a = self.imageData:getPixel(midX, midY)
-            local hasWall = (r < 0.1 and g < 0.1 and b < 0.1) or a < 0.1
+            local brightness = (r + g + b) / 3
+            local hasWall = (brightness < 0.5) or a <= 0.05
 
             local isTileBlocked = hasWall
             self.collisionMap[ty][tx] = isTileBlocked
             
             if not isTileBlocked then
                 table.insert(self.walkableTiles, {x = tx, y = ty})
-            else
-                table.insert(self.wallTiles, {x = tx, y = ty})
             end
         end
     end
 end
 
 function Dungeon:isBlocked(x, y)
+    -- Grid check
     local tileX = math.floor(x / self.gridSize) + 1
     local tileY = math.floor(y / self.gridSize) + 1
     
@@ -52,6 +53,7 @@ function Dungeon:isBlocked(x, y)
 end
 
 function Dungeon:hasLineOfSight(x1, y1, x2, y2)
+    -- LOS raycast
     local dx = x2 - x1
     local dy = y2 - y1
     local dist = math.sqrt(dx * dx + dy * dy)
@@ -72,14 +74,16 @@ function Dungeon:hasLineOfSight(x1, y1, x2, y2)
 end
 
 function Dungeon:isColliding(x, y, w, h)
+    -- AABB grid check
     if x < 0 or y < 0 or x + w > self.width or y + h > self.height then
         return true
     end
 
-    local startTileX = math.floor(x / self.gridSize) + 1
-    local startTileY = math.floor(y / self.gridSize) + 1
-    local endTileX = math.floor((x + w - 1) / self.gridSize) + 1
-    local endTileY = math.floor((y + h - 1) / self.gridSize) + 1
+    local margin = 0.1
+    local startTileX = math.floor((x + margin) / self.gridSize) + 1
+    local startTileY = math.floor((y + margin) / self.gridSize) + 1
+    local endTileX = math.floor((x + w - 1 - margin) / self.gridSize) + 1
+    local endTileY = math.floor((y + h - 1 - margin) / self.gridSize) + 1
 
     for ty = startTileY, endTileY do
         for tx = startTileX, endTileX do
@@ -95,6 +99,7 @@ function Dungeon:isColliding(x, y, w, h)
 end
 
 function Dungeon:canFitAtCenter(x, y, w, h, padding)
+    -- Center fit check
     if not w or not h then return true end
     padding = padding or 0
 
@@ -107,28 +112,8 @@ function Dungeon:canFitAtCenter(x, y, w, h, padding)
     return not self:isColliding(x - w / 2, y - h / 2, w, h)
 end
 
-function Dungeon:canFitInWall(x, y, w, h, padding)
-    if not w or not h then return true end
-    padding = padding or 0
-    local left = x - w / 2
-    local top = y - h / 2
-
-    local startTileX = math.floor(left / self.gridSize) + 1
-    local startTileY = math.floor(top / self.gridSize) + 1
-    local endTileX = math.floor((left + w - 1) / self.gridSize) + 1
-    local endTileY = math.floor((top + h - 1) / self.gridSize) + 1
-
-    for ty = startTileY, endTileY do
-        for tx = startTileX, endTileX do
-            if not self.collisionMap[ty] or self.collisionMap[ty][tx] == false then
-                return false
-            end
-        end
-    end
-    return true
-end
-
 function Dungeon:getRandomSpawnPoint(w, h, padding)
+    -- Get random spot
     if #self.walkableTiles == 0 then return nil end
     padding = padding or 0
     
@@ -151,53 +136,8 @@ function Dungeon:getRandomSpawnPoint(w, h, padding)
     return nil
 end
 
-function Dungeon:getRandomWallSpawnPoint()
-    if #self.wallTiles == 0 then return nil end
-    
-    local spot = self.wallTiles[math.random(#self.wallTiles)]
-    local x = (spot.x - 0.5) * self.gridSize
-    local y = (spot.y - 0.5) * self.gridSize
-    return x, y
-end
-
-function Dungeon:getCentralSpawnPoint(w, h, padding)
-    if #self.walkableTiles == 0 then return nil end
-    padding = padding or 0
-
-    local totalX, totalY = 0, 0
-    for _, spot in ipairs(self.walkableTiles) do
-        totalX = totalX + (spot.x - 0.5) * self.gridSize
-        totalY = totalY + (spot.y - 0.5) * self.gridSize
-    end
-
-    local avgX = totalX / #self.walkableTiles
-    local avgY = totalY / #self.walkableTiles
-
-    local closestX, closestY = nil, nil
-    local minDistSq = math.huge
-
-    for _, spot in ipairs(self.walkableTiles) do
-        local tileCenterX = (spot.x - 0.5) * self.gridSize
-        local tileCenterY = (spot.y - 0.5) * self.gridSize
-
-        if self:canFitAtCenter(tileCenterX, tileCenterY, w, h, padding) then
-            local distSq = (tileCenterX - avgX)^2 + (tileCenterY - avgY)^2
-            if distSq < minDistSq then
-                minDistSq = distSq
-                closestX = tileCenterX
-                closestY = tileCenterY
-            end
-        end
-    end
-
-    if closestX and closestY then
-        return closestX, closestY
-    end
-
-    return self:getRandomSpawnPoint(w, h, padding)
-end
-
 function Dungeon:getRightmostSpawnPoint(w, h, padding)
+    -- Get boss room spot
     if #self.walkableTiles == 0 then return nil end
     padding = padding or 0
 
@@ -225,6 +165,7 @@ function Dungeon:getRightmostSpawnPoint(w, h, padding)
 end
 
 function Dungeon:getLeftmostSpawnPoint(w, h, padding)
+    -- Get safe room spot
     if #self.walkableTiles == 0 then return nil end
     padding = padding or 0
 
@@ -250,6 +191,7 @@ function Dungeon:getLeftmostSpawnPoint(w, h, padding)
 end
 
 function Dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, padding)
+    -- Get world spawns
     if #self.walkableTiles == 0 then return {} end
     padding = padding or 0
 

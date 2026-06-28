@@ -1,0 +1,189 @@
+-- skeleton_archer.lua
+-- Ranged enemy AI
+local SkeletonArcher = {}
+SkeletonArcher.__index = SkeletonArcher
+
+SkeletonArcher.HITBOX_W = 18
+SkeletonArcher.HITBOX_H = 28
+
+function SkeletonArcher:new(x, y)
+    local self = setmetatable({}, SkeletonArcher)
+    self.w, self.h = SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H
+    self.x, self.y = x - self.w / 2, y - self.h / 2
+
+    self.hp, self.maxHp = 40, 40
+    self.speed = 50
+    self.state = "idle"
+    self.previousState = "idle"
+    self.direction = "left"
+    self.timer, self.frame = 0, 0
+    self.invuln = 0
+    self.attackCooldown = 0
+    
+    self.visionRange = 250
+    self.attackRange = 180
+    self.keepDistance = 100
+
+    self.animations = {
+        idle   = { frames = 7, speed = 0.12 },
+        walk   = { frames = 8, speed = 0.10 },
+        attack = { frames = 15, speed = 0.08 },
+        death  = { frames = 5, speed = 0.15 }
+    }
+    
+    self.targetHeight = 50
+    self.displayScale = 1.0
+    self:updateTexture()
+    return self
+end
+
+function SkeletonArcher:updateTexture()
+    -- Update visuals
+    local texKey = "skeleton_archer_" .. self.state
+    self.texture = gTextures[texKey] or gTextures["skeleton_archer_idle"]
+    if self.texture then
+        local sw, sh = self.texture:getDimensions()
+        local anim = self.animations[self.state]
+        self.frameWidth = sw / anim.frames
+        self.frameHeight = sh
+        self.displayScale = self.targetHeight / self.frameHeight
+        self.frame = self.frame % anim.frames
+        self.quad = love.graphics.newQuad(self.frame * self.frameWidth, 0, self.frameWidth, self.frameHeight, sw, sh)
+    end
+end
+
+function SkeletonArcher:update(dt, player, dungeon, projectiles)
+    -- Update logic
+    if self.hp <= 0 then
+        if self.state ~= "death" then
+            self.state = "death"
+        end
+    elseif self.attackCooldown > 0 then
+        self.attackCooldown = self.attackCooldown - dt
+    end
+
+    if self.state ~= self.previousState then
+        self.frame, self.timer = 0, 0
+        self.previousState = self.state
+        self:updateTexture()
+    end
+
+    -- AI logic
+    if self.state ~= "death" and self.state ~= "attack" then
+        local px, py = player:getCenter()
+        local sx, sy = self:getCenter()
+        local dx, dy = px - sx, py - sy
+        local dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist < self.visionRange and dungeon:hasLineOfSight(sx, sy, px, py) then
+            self.direction = dx > 0 and "right" or "left"
+            
+            if dist < self.attackRange and self.attackCooldown <= 0 then
+                self.state = "attack"
+                self.frame, self.timer = 0, 0
+            elseif dist < self.keepDistance then
+                self.state = "walk"
+                local angle = math.atan2(dy, dx)
+                self:move(dungeon, math.cos(angle + math.pi) * self.speed * dt, math.sin(angle + math.pi) * self.speed * dt)
+            elseif dist > self.attackRange - 20 then
+                self.state = "walk"
+                local angle = math.atan2(dy, dx)
+                self:move(dungeon, math.cos(angle) * self.speed * dt, math.sin(angle) * self.speed * dt)
+            else
+                self.state = "idle"
+            end
+        else
+            self.state = "idle"
+        end
+    end
+
+    self:handleAnimation(dt, projectiles, player)
+end
+
+function SkeletonArcher:handleAnimation(dt, projectiles, player)
+    -- Frame cycle
+    self.timer = self.timer + dt
+    local anim = self.animations[self.state]
+    if self.timer > anim.speed then
+        self.timer = 0
+        -- Fire shot
+        if self.state == "attack" and self.frame == 12 then
+            local px, py = player:getCenter()
+            local sx, sy = self:getCenter()
+            local angle = math.atan2(py - sy, px - sx)
+            table.insert(projectiles, {
+                x = sx, y = sy, 
+                vx = math.cos(angle) * 200, vy = math.sin(angle) * 200,
+                angle = angle, type = "arrow", owner = self, frame = 1
+            })
+        end
+
+        if self.state == "death" then
+            if self.frame < anim.frames - 1 then
+                self.frame = self.frame + 1
+            else
+                self.deadAnimationComplete = true
+            end
+        else
+            if self.frame < anim.frames - 1 then
+                self.frame = self.frame + 1
+            else
+                if self.state == "attack" then 
+                    self.state = "idle"
+                    self.attackCooldown = 2.0
+                end
+                self.frame = 0
+            end
+        end
+        self:updateTexture()
+    end
+end
+
+function SkeletonArcher:move(dungeon, dx, dy)
+    -- Movement
+    if not dungeon then return end
+
+    local steps = math.ceil(math.max(math.abs(dx), math.abs(dy)) / 2)
+    if steps == 0 then return end
+    local stepX, stepY = dx / steps, dy / steps
+
+    for i = 1, steps do
+        if not dungeon:isColliding(self.x + stepX, self.y, self.w, self.h) then
+            self.x = self.x + stepX
+        end
+        if not dungeon:isColliding(self.x, self.y + stepY, self.w, self.h) then
+            self.y = self.y + stepY
+        end
+    end
+end
+
+function SkeletonArcher:takeDamage(amount, attacker, dungeon)
+    -- Damage and KB
+    if self.hp > 0 then
+        self.hp = self.hp - amount
+        self.invuln = 0.5
+        local pushDx, pushDy = Push.execute(attacker, self, 15, 0.5, false)
+        if pushDx and pushDy then
+            self:move(dungeon, pushDx, pushDy)
+        end
+    end
+end
+
+function SkeletonArcher:getCenter() return self.x + self.w / 2, self.y + self.h / 2 end
+
+function SkeletonArcher:render()
+    if self.deadAnimationComplete or not self.texture then return end
+    local scaleX = (self.direction == "right" and 1 or -1) * self.displayScale
+    local pivotX, pivotY = self.x + self.w / 2, self.y + self.h
+    
+    love.graphics.setColor(1, 1, 1)
+    if self.invuln > 0 then 
+        love.graphics.setColor(1, 0.4, 0.4) 
+        self.invuln = self.invuln - love.timer.getDelta()
+    end
+
+    love.graphics.draw(self.texture, self.quad, pivotX, pivotY, 0, scaleX, self.displayScale, self.frameWidth / 2, self.frameHeight)
+    love.graphics.setColor(1, 1, 1)
+end
+
+return SkeletonArcher

@@ -1,13 +1,14 @@
 -- lighting.lua
+-- Light FX
 local Class = require("system.class")
 local Lighting = Class.define()
 
 function Lighting:init(knight)
+    -- Init
     self.knight = knight
     self.radius = 80
-    self.darkness = 0
+    self.darkness = 0.95
 
-    -- Radial attenuation shader for torch effect
     self.shader = love.graphics.newShader([[
         uniform vec2 lightPos;
         uniform float lightRadius;
@@ -23,6 +24,7 @@ function Lighting:init(knight)
 end
 
 function Lighting:render(camX, camY, scale)
+    -- Apply shader
     local sw, sh = love.graphics.getDimensions()
     local targetX, targetY = self.knight:getLightPosition()
 
@@ -32,7 +34,6 @@ function Lighting:render(camX, camY, scale)
     self.shader:send("darkness", self.darkness)
 
     love.graphics.setColor(1, 1, 1)
-    -- Draw full-screen quad to trigger shader
     love.graphics.rectangle("fill", 0, 0, sw, sh)
 
     love.graphics.setShader()

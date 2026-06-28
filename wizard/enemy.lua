@@ -94,6 +94,10 @@ function SimpleEnemy:update(dt, player)
     end
 end
 
+function SimpleEnemy:getCenter()
+    return self.x + self.w / 2, self.y + self.h / 2
+end
+
 function SimpleEnemy:render()
     love.graphics.setColor(1, 1, 1)
     if self.texture and self.quad then
