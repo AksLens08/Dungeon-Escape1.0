@@ -29,9 +29,12 @@ function Knight:init(x, y)
     self.attackTimer, self.attackCooldown = 0, 0
     self.deadAnimationComplete = false
 
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
+
     self.growthTimer = 0
     self.frameWidth, self.frameHeight = 128, 128
-    -- animationFrames will be dynamically updated by updateTexture
     self.animationSpeeds = {
         idle = 0.12, walk = 0.08, run = 0.09, attack = 0.07, run_attack = 0.06,
         hurt = 0.1, death = 0.15, defend = 0.1
@@ -39,9 +42,9 @@ function Knight:init(x, y)
     self.lightCenters = {
         idle = { x = 33, y = 95.5 },
         walk = { x = 32.5, y = 95.5 },
-        run = { x = 32.5, y = 95.5 }, -- Assuming similar pivot to walk
+        run = { x = 32.5, y = 95.5 },
         attack = { x = 54, y = 95.5 },
-        run_attack = { x = 54, y = 95.5 }, -- Assuming similar pivot to attack
+        run_attack = { x = 54, y = 95.5 },
         hurt = { x = 37.5, y = 98 },
         death = { x = 35, y = 98.5 },
         defend = { x = 33, y = 95.5 }
@@ -58,8 +61,8 @@ function Knight:updateTexture()
     if self.texture then
         local sw, sh = self.texture:getDimensions()
         local maxFrames = math.max(1, math.floor(sw / self.frameWidth))
-        if not self.animationFrames then self.animationFrames = {} end -- Ensure table exists
-        self.animationFrames[self.state] = maxFrames -- Dynamically update frame count for current state
+        if not self.animationFrames then self.animationFrames = {} end
+        self.animationFrames[self.state] = maxFrames
         self.frame = self.frame % maxFrames
         self.displayScale = 60 / self.frameHeight
         SpriteAnim.updateQuad(self)
@@ -89,7 +92,7 @@ function Knight:update(dt, map, gMouse)
         if self.hp < self.maxHp then
             self.hpRegenTimer = self.hpRegenTimer + dt
             if self.hpRegenTimer >= self.hpRegenInterval then
-                self:heal(10) -- Regenerate 10 HP
+                self:heal(10)
                 self.hpRegenTimer = 0
             end
         end
@@ -123,13 +126,13 @@ function Knight:update(dt, map, gMouse)
         local currentSpeed = self.speed
 
         if canRun then
-            currentSpeed = self.speed * 1.3 -- Reduced multiplier to fix blurriness/jitter
-            self.stamina = math.max(0, self.stamina - 25 * dt) -- Stamina drain per second
+            currentSpeed = self.speed * 1.3
+            self.stamina = math.max(0, self.stamina - 25 * dt)
         else
-            self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt) -- Stamina regeneration
+            self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt)
         end
 
-        local mag = (moveX ~= 0 and moveY ~= 0) and 0.7071 or 1 -- Diagonal movement speed reduction
+        local mag = (moveX ~= 0 and moveY ~= 0) and 0.7071 or 1
         local targetDx = moveX * currentSpeed * mag
         local targetDy = moveY * currentSpeed * mag
 
@@ -146,20 +149,17 @@ function Knight:update(dt, map, gMouse)
         -- States
         if self.invuln > 0.7 then
             self.state = "hurt"
-            self.attackTimer = 0 -- Cancel attack if interrupted by damage
+            self.attackTimer = 0
         elseif (gMouse and gMouse.rightDown) then
             self.state = "defend"
-            self.attackTimer = 0 -- Cancel attack if player chooses to defend
-        elseif self.attackTimer > 0 then -- If an attack is in progress, maintain its state.
-            -- This ensures the animation plays out unless interrupted by higher priority states (hurt/defend).
-            -- The state was already set to "attack" or "run_attack" when the attack started.
-            -- No explicit state change needed here, as self.state should already be correct.
-            -- This block effectively "locks" the state to the current attack state.
-        elseif (gMouse and gMouse.leftDown) and self.attackCooldown <= 0 then -- Only allow new attack if not already attacking
+            self.attackTimer = 0
+        elseif self.attackTimer > 0 then
+            -- Maintain attack state
+        elseif (gMouse and gMouse.leftDown) and self.attackCooldown <= 0 then
             local canRunAttack = isShiftDown and self.stamina >= 15
             self.state = canRunAttack and "run_attack" or "attack"
             if canRunAttack then
-                self.stamina = math.max(0, self.stamina - 15) -- Chunk cost for run attack
+                self.stamina = math.max(0, self.stamina - 15)
             end
             self.attackTimer = 0.35
             Audio:play("sword_slice")
@@ -167,7 +167,8 @@ function Knight:update(dt, map, gMouse)
         elseif canRun then self.state = "run"
         elseif isMoving then self.state = "walk"
         else self.state = "idle" end
-    end -- End of if self.hp <= 0 else block
+    end
+    
     if self.attackTimer > 0 then 
         self.attackTimer = self.attackTimer - dt 
     end
@@ -206,6 +207,15 @@ function Knight:update(dt, map, gMouse)
         Audio:stop("footsteps")
     end
 
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:moveWithCollision(map, self.knockbackX * dt, self.knockbackY * dt)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+    end
+
     self:moveWithCollision(map, self.dx * dt, self.dy * dt)
 end
 
@@ -221,7 +231,7 @@ function Knight:takeDamage(amount, attacker, dungeon)
         if self.armor > 0 then
             self.armor = self.armor - amount
             if self.armor < 0 then
-                self.hp = self.hp + self.armor -- Adding negative armor to HP
+                self.hp = self.hp + self.armor
                 self.armor = 0
             end
         else
@@ -236,11 +246,23 @@ function Knight:takeDamage(amount, attacker, dungeon)
 
         self.invuln = 0.8
 
-        -- Knockback
+        -- Juice: Trigger hit effects
+        triggerHitstop(0.1)
+        triggerShake(0.3, 4)
+        spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
+
+        -- Juice: Apply physics knockback
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, amount, 0.5, false)
-            if pushDx and pushDy and dungeon then
-                self:moveWithCollision(dungeon, pushDx, pushDy)
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                self.knockbackX = (dx / dist) * 350 -- Push strength
+                self.knockbackY = (dy / dist) * 350
             end
         end
     end

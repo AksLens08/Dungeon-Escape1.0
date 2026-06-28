@@ -1,5 +1,4 @@
 -- skeleton_warrior.lua
-local Push = require("system.push")
 local SkeletonWarrior = {}
 SkeletonWarrior.__index = SkeletonWarrior
 
@@ -26,6 +25,10 @@ function SkeletonWarrior:new(x, y)
     self.deadAnimationComplete = false
     self.hasHit = false
     
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
+
     self.visionRange = 250
     self.attackRange = 35
     self.keepDistance = 0
@@ -111,6 +114,15 @@ function SkeletonWarrior:update(dt, player, dungeon, projectiles)
     end
 
     self:handleAnimation(dt, projectiles, player, dungeon)
+
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:move(dungeon, self.knockbackX * dt, self.knockbackY * dt)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+    end
 end
 
 function SkeletonWarrior:handleAnimation(dt, projectiles, player, dungeon)
@@ -184,10 +196,19 @@ function SkeletonWarrior:takeDamage(amount, attacker, dungeon, kbMult)
             end
         end
 
+        -- Juice: Apply physics knockback
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
-            if pushDx and pushDy then
-                self:move(dungeon, pushDx, pushDy)
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                local strength = 300 * (kbMult or 0.5) -- Scale push strength
+                self.knockbackX = (dx / dist) * strength
+                self.knockbackY = (dy / dist) * strength
             end
         end
     end

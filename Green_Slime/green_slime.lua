@@ -1,6 +1,4 @@
 -- green_slime.lua
-local Push = require("system.push")
-
 local GreenSlime = {}
 GreenSlime.__index = GreenSlime
 
@@ -35,6 +33,10 @@ function GreenSlime:init(x, y)
     
     self.behaviorTimer = math.random(1, 2)
     self.deadAnimationComplete = false
+
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
 
     self.targetHeight = 40
     self.displayScale = 1.0
@@ -97,8 +99,18 @@ function GreenSlime:update(dt, player, dungeon)
         end
     end
 
+    -- Normal AI movement
     if self.state == "walk" then
         self:move(dungeon, self.dx * dt, self.dy * dt)
+    end
+
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:move(dungeon, self.knockbackX * dt, self.knockbackY * dt)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
     end
 end
 
@@ -191,16 +203,26 @@ function GreenSlime:takeDamage(amount, attacker, dungeon, kbMult)
             self.state, self.frame, self.timer = "hurt", 0, 0; self:updateTexture()
         end
 
+        -- Juice: Apply physics knockback
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
-            if pushDx and pushDy then
-                self:move(dungeon, pushDx, pushDy)
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                local strength = 300 * (kbMult or 0.5) -- Scale push strength
+                self.knockbackX = (dx / dist) * strength
+                self.knockbackY = (dy / dist) * strength
             end
         end
     end
 end
 
 function GreenSlime:getCenter() return self.x + self.w / 2, self.y + self.h / 2 end
+
 function GreenSlime:render()
     if self.deadAnimationComplete or not self.texture then return end
     local scaleX = (self.direction == "right" and 1 or -1) * self.displayScale
@@ -217,4 +239,5 @@ function GreenSlime:render()
         love.graphics.setColor(1, 1, 1)
     end
 end
+
 return GreenSlime

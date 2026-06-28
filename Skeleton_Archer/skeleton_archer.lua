@@ -1,6 +1,5 @@
 -- skeleton_archer.lua
 -- Ranged enemy AI
-local Push = require("system.push")
 local SkeletonArcher = {}
 SkeletonArcher.__index = SkeletonArcher
 
@@ -25,6 +24,10 @@ function SkeletonArcher:new(x, y)
     self.visionRange = 250
     self.attackRange = 180
     self.keepDistance = 100
+
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
 
     self.animationSpeeds = {
         idle   = 0.12,
@@ -103,6 +106,15 @@ function SkeletonArcher:update(dt, player, dungeon, projectiles)
     end
 
     self:handleAnimation(dt, projectiles, player)
+
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:move(dungeon, self.knockbackX * dt, self.knockbackY * dt)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+    end
 end
 
 function SkeletonArcher:handleAnimation(dt, projectiles, player)
@@ -169,9 +181,21 @@ function SkeletonArcher:takeDamage(amount, attacker, dungeon, kbMult)
     if self.hp > 0 then
         self.hp = self.hp - amount
         self.invuln = 0.5
-        local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
-        if pushDx and pushDy then
-            self:move(dungeon, pushDx, pushDy)
+        
+        -- Juice: Apply physics knockback
+        if attacker and type(attacker) == "table" then
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                local strength = 300 * (kbMult or 0.5) -- Scale push strength
+                self.knockbackX = (dx / dist) * strength
+                self.knockbackY = (dy / dist) * strength
+            end
         end
     end
 end

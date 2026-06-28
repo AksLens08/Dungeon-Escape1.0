@@ -1,6 +1,4 @@
 -- blue_slime.lua
-local Push = require("system.push")
-
 local Slime = {}
 Slime.__index = Slime
 
@@ -19,7 +17,7 @@ function Slime:init(x, y)
     
     self.type = "enemy"
     self.subType = "slime"
-    self.minimapColor = {0.2, 0.5, 1} -- Blue color for minimap
+    self.minimapColor = {0.2, 0.5, 1} 
 
     self.hp, self.maxHp, self.damage = 80, 80, 10
     self.dx, self.dy = 0, 0
@@ -35,6 +33,10 @@ function Slime:init(x, y)
     
     self.behaviorTimer = math.random(1, 2)
     self.deadAnimationComplete = false
+
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
 
     self.targetHeight = 40
     self.displayScale = 1.0
@@ -79,7 +81,7 @@ function Slime:update(dt, player, dungeon, projectiles)
         self:updateAI(dt, player, dungeon)
     end
 
-    -- Synchronize state changes to reset animation timers and clean up attack data
+    -- Synchronize state changes
     if self.state ~= self.previousState then
         self.frame, self.timer = 0, 0
         self.previousState = self.state
@@ -88,19 +90,29 @@ function Slime:update(dt, player, dungeon, projectiles)
 
     self:handleAnimation(dt)
 
-    -- Check for damage application during the attack animation (mid-swing)
+    -- Check for damage application during attack
     if self.state == "attack" and self.frame == 2 and not self.hasHit then
         local px, py = player:getCenter()
         local sx, sy = self:getCenter()
         local distSq = (px - sx)^2 + (py - sy)^2
-        if distSq < 300 then -- 22 pixel reach
+        if distSq < 300 then 
             player:takeDamage(self.damage, self, dungeon)
             self.hasHit = true
         end
     end
 
+    -- Normal AI movement
     if self.state == "walk" then
         self:move(dungeon, self.dx * dt, self.dy * dt)
+    end
+
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:move(dungeon, self.knockbackX * dt, self.knockbackY * dt)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
     end
 end
 
@@ -112,15 +124,15 @@ function Slime:updateAI(dt, player, dungeon)
 
     self.behaviorTimer = self.behaviorTimer - dt
 
-    -- Allow interrupting any state (idle or walk) to attack if close enough
+    -- Attack if close enough
     if self.behaviorTimer <= 0 and dist < 25 and dungeon:hasLineOfSight(sx, sy, px, py) then
         self.state = "attack"
-        self.dx, self.dy = 0, 0 -- Stop moving while attacking
+        self.dx, self.dy = 0, 0 
         self.frame, self.timer = 0, 0
         self.hasHit = false
         self.direction = (px > sx) and "right" or "left"
         self:updateTexture()
-        return -- Exit AI update to prioritize the attack
+        return 
     end
 
     if self.state == "idle" then
@@ -128,7 +140,7 @@ function Slime:updateAI(dt, player, dungeon)
         if self.behaviorTimer <= 0 then
             if dist < self.visionRange and dungeon:hasLineOfSight(sx, sy, px, py) then
                 self.state = "walk"
-                self.behaviorTimer = 0.8 -- Duration matches 8 frames * 0.1s
+                self.behaviorTimer = 0.8 
                 local angle = math.atan2(dy, dx)
                 self.dx = math.cos(angle) * self.speed
                 self.dy = math.sin(angle) * self.speed
@@ -145,16 +157,15 @@ function Slime:updateAI(dt, player, dungeon)
     end
 end
 
-function Slime:move(map, amountX, amountY) -- Renamed for consistency
+function Slime:move(map, amountX, amountY)
     if not map then return end
 
-    -- Stepped movement prevents passing through walls and improves sliding
+    -- Stepped movement prevents passing through walls
     local steps = math.ceil(math.max(math.abs(amountX), math.abs(amountY)) / 2)
     if steps == 0 then return end
     local stepX, stepY = amountX / steps, amountY / steps
 
     for i = 1, steps do
-        -- Checking X and Y independently is crucial for sliding behavior
         if not map:isColliding(self.x + stepX, self.y, self.w, self.h) then
             self.x = self.x + stepX
         end
@@ -176,7 +187,6 @@ function Slime:handleAnimation(dt)
             if self.frame < maxFrames - 1 then 
                 self.frame = self.frame + 1 
             else 
-                -- Finish attack animation and return to idle
                 self.state, self.frame = "idle", 0
                 self.behaviorTimer = math.random(1, 2)
             end
@@ -194,8 +204,6 @@ function Slime:takeDamage(amount, attacker, dungeon, kbMult)
         Audio:play("slime_hurt")
 
         if self.hp <= 0 then
-            -- Restore resources only when defeated
-            -- Audio:play("slime_hurt") -- Already played above, but could be played again for a "death sound" variant
             if attacker then
                 if attacker.mana then
                     attacker.mana = math.min(attacker.maxMana, attacker.mana + 20)
@@ -208,10 +216,20 @@ function Slime:takeDamage(amount, attacker, dungeon, kbMult)
             self:updateTexture()
         end
 
-        -- Use the passed multiplier, or default to 0.5 for slimes
-        local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
-        if pushDx and pushDy then
-            self:move(dungeon, pushDx, pushDy) -- Use the renamed move function
+        -- Juice: Apply physics knockback
+        if attacker and type(attacker) == "table" then
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                local strength = 300 * (kbMult or 0.5) -- Scale push strength
+                self.knockbackX = (dx / dist) * strength
+                self.knockbackY = (dy / dist) * strength
+            end
         end
     end
 end
@@ -232,11 +250,10 @@ function Slime:render()
         love.graphics.setColor(1, 0.5, 0.5) 
     end
 
-    -- Slimes are drawn slightly lower to stick to the floor
     love.graphics.draw(self.texture, self.quad, pivotX, pivotY, 0, scaleX, self.displayScale, self.frameWidth / 2, self.frameHeight)
     love.graphics.setColor(1, 1, 1)
     
-    -- Optional health bar for small enemies
+    -- Health bar
     if self.hp < self.maxHp and self.hp > 0 then
         love.graphics.setColor(0, 0, 0, 0.5)
         love.graphics.rectangle("fill", self.x, self.y - 10, self.w, 3)

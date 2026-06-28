@@ -11,29 +11,33 @@ Wizard.HITBOX_W = 20
 Wizard.HITBOX_H = 30
 
 function Wizard:init(x, y)
-    -- Setup
+    -- Setup stats
     self.w, self.h = Wizard.HITBOX_W, Wizard.HITBOX_H
     self.x, self.y = x - self.w / 2, y - self.h / 2
     
     self.type = "player"
     self.subType = "wizard"
-    self.minimapColor = {0.7, 0.3, 1} -- Purple color for wizards on the minimap
+    self.minimapColor = {0.7, 0.3, 1} 
 
     self.hp, self.maxHp, self.mana, self.maxMana, self.damage, self.coins = 100, 100, 100, 100, 20, 0
-    self.baseDamage = 20 -- Store base damage for buff calculations
+    self.baseDamage = 20 
     self.buffTimer = 0
     self.hpRegenTimer, self.hpRegenInterval = 0, 2.5
-    self.dx, self.dy, self.speed = 0, 0, 70 -- Base speed matched to Knight
-    self.stamina, self.maxStamina = 100, 100 -- Add stamina
+    self.dx, self.dy, self.speed = 0, 0, 70 
+    self.stamina, self.maxStamina = 100, 100 
     self.isSprinting = false
     self.slideSide = nil
     
     self.state, self.previousState, self.direction = "idle", "idle", "right"
     self.timer, self.frame = 0, 0
-    self.animationFrames = {} -- Store detected frame counts
+    self.animationFrames = {} 
     self.attackTimer, self.attackCooldown = 0, 0
     self.invuln = 0
     
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
+
     self.targetHeight = 58
     self.displayScale = 1.0
     self.frameWidth, self.frameHeight = 128, 128
@@ -79,7 +83,7 @@ function Wizard:updateTexture()
         
         self.animationFrames[self.state] = maxFrames
         self.frame = self.frame % maxFrames
-        self.displayScale = self.targetHeight / 128 -- Use standard cell height
+        self.displayScale = self.targetHeight / 128 
 
         SpriteAnim.updateQuad(self)
     end
@@ -112,10 +116,10 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
 
         self.mana = math.min(self.maxMana, self.mana + 1 * dt)
 
-        local isShiftDown = love.keyboard.isDown("lshift", "rshift") -- Add isShiftDown
+        local isShiftDown = love.keyboard.isDown("lshift", "rshift") 
 
         local inputX, inputY = 0, 0
-        -- Freeze movement
+        -- Freeze movement during flame cast
         if self.state ~= "flame" then
             if love.keyboard.isDown("w", "up") then inputY = -1 end
             if love.keyboard.isDown("s", "down") then inputY = 1 end
@@ -123,7 +127,7 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
             if love.keyboard.isDown("d", "right") then inputX, self.direction = 1, "right" end
         end
 
-        local isMoving = (inputX ~= 0 or inputY ~= 0) -- Define isMoving
+        local isMoving = (inputX ~= 0 or inputY ~= 0) 
 
         if isMoving and isShiftDown then
             if not self.isSprinting and self.stamina >= 20 then
@@ -135,16 +139,16 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
         if self.stamina <= 0 then self.isSprinting = false end
 
         local canRun = self.isSprinting
-        local currentSpeed = self.speed -- Base speed
+        local currentSpeed = self.speed 
 
         if canRun then
-            currentSpeed = self.speed * 1.3 -- Running speed multiplier (same as Knight)
-            self.stamina = math.max(0, self.stamina - 25 * dt) -- Stamina drain (same as Knight)
+            currentSpeed = self.speed * 1.3 
+            self.stamina = math.max(0, self.stamina - 25 * dt) 
         else
-            self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt) -- Stamina regen (same as Knight)
+            self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt) 
         end
 
-        -- Physics
+        -- Physics movement calculation
         local mag = (inputX ~= 0 and inputY ~= 0) and 0.7071 or 1
         local targetDx = inputX * currentSpeed * mag
         local targetDy = inputY * currentSpeed * mag
@@ -165,14 +169,15 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
             Audio:stop("footsteps")
         end
 
+        -- State machine
         if gMouse.rightDown and self.attackCooldown <= 0 and self.mana >= 20
             and self.attackTimer <= 0 and self.state ~= "flame" and projectiles then
             self.state = "flame"
             self.flameHitDone = false
-            self.mana = self.mana - 20 -- Flame Jet costs 20 Mana
+            self.mana = self.mana - 20 
             Audio:play("fireball")
             self.dx, self.dy = 0, 0
-            self.attackTimer = 0.84 -- matches the 14-frame animation duration (14 * 0.06)
+            self.attackTimer = 0.84 
             self.attackCooldown = 1.0
         elseif gMouse.leftDown and self.attackCooldown <= 0 and self.attackTimer <= 0 then
             self.state = "attack"
@@ -181,10 +186,10 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
             self.attackCooldown = 1.0
         elseif self.invuln > 0.6 then
             self.state = "hurt"
-            self.attackTimer = 0 -- Cancel spells if interrupted by damage
+            self.attackTimer = 0 
         elseif self.attackTimer > 0 and (self.state == "flame" or self.state == "attack") then
-            -- Hold attack animation until the timer finishes
-        elseif canRun then self.state = "run" -- Add run state
+            -- Hold attack animation
+        elseif canRun then self.state = "run" 
         elseif math.abs(self.dx) > 2 or math.abs(self.dy) > 2 then
             self.state = "walk"
         else
@@ -198,6 +203,7 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
         self:updateTexture()
     end
 
+    -- Flame jet collision check
     if self.state == "flame" and self.frame == 8 and not self.flameHitDone and enemies then
         self.flameHitDone = true
         local px, py = self:getCenter()
@@ -225,7 +231,18 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
     end
 
     self:handleAnimation(dt)
+    
+    -- Normal movement
     self:moveWithCollision(dungeon, self.dx * dt, self.dy * dt)
+
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:moveWithCollision(dungeon, self.knockbackX * dt, self.knockbackY * dt)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+    end
 end
 
 function Wizard:handleAnimation(dt)
@@ -255,11 +272,23 @@ function Wizard:takeDamage(amount, attacker, dungeon)
         self.invuln = 0.8
         Audio:play("hurt")
 
-        -- Knockback
+        -- Juice: Trigger hit effects
+        triggerHitstop(0.1)
+        triggerShake(0.3, 4)
+        spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
+
+        -- Juice: Apply physics knockback
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, amount, 0.8, false)
-            if pushDx and pushDy and dungeon then
-                self:moveWithCollision(dungeon, pushDx, pushDy)
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                self.knockbackX = (dx / dist) * 350 -- Push strength
+                self.knockbackY = (dy / dist) * 350
             end
         end
     end
@@ -271,11 +300,11 @@ end
 
 function Wizard:applyAttackBuff(duration)
     self.buffTimer = duration
-    self.damage = self.baseDamage * 2 -- Double the attack power
+    self.damage = self.baseDamage * 2 
 end
 
 function Wizard:getCenter()
-    return self.x + self.w / 2, self.y + self.h / 2 -- World coords
+    return self.x + self.w / 2, self.y + self.h / 2 
 end
 
 function Wizard:getLightPosition()
@@ -301,29 +330,29 @@ function Wizard:drawHUD()
         love.graphics.setLineWidth(2)
         love.graphics.rectangle("line", x - 4, y - 4, barW + 8, barH + 8)
 
-        -- 2. Corner Rivets
+        -- Corner Rivets
         love.graphics.setColor(0.5, 0.5, 0.5, 1)
         love.graphics.circle("fill", x - 4, y - 4, 3)
         love.graphics.circle("fill", x + barW + 4, y - 4, 3)
         love.graphics.circle("fill", x - 4, y + barH + 4, 3)
         love.graphics.circle("fill", x + barW + 4, y + barH + 4, 3)
 
-        -- 3. Stone Background
+        -- Stone Background
         love.graphics.setColor(0.15, 0.15, 0.15, 1)
         love.graphics.rectangle("fill", x, y, barW, barH)
 
-        -- 4. The Fill
+        -- The Fill
         local percent = math.max(0, current / max)
         love.graphics.setColor(color[1], color[2], color[3], 1)
         love.graphics.rectangle("fill", x, y, barW * percent, barH)
 
-        -- 5. Medieval Bevel
+        -- Medieval Bevel
         love.graphics.setColor(0, 0, 0, 0.3)
         love.graphics.rectangle("fill", x, y + barH * 0.7, barW * percent, barH * 0.3)
         love.graphics.setColor(1, 1, 1, 0.15)
         love.graphics.rectangle("fill", x, y, barW * percent, 4)
 
-        -- 6. Text
+        -- Text
         love.graphics.setColor(0.8, 0.7, 0.5, 1)
         love.graphics.print(label, x, y - 22)
         love.graphics.setColor(1, 1, 1, 1)
@@ -349,13 +378,12 @@ function Wizard:drawHUD()
     love.graphics.print("COINS: " .. (self.coins or 0) .. " / 20", margin + 10, staY + barH + 20)
     
     love.graphics.setLineWidth(1)
-    -- Clean up draw state
 end
 
 function Wizard:handleInput(key) end
 
 function Wizard:render()
-    
+    -- Draw Wizard
     if self.texture and self.quad then
         local scaleX = (self.direction == "right" and 1 or -1) * self.displayScale
         local pivotX = self.x + self.w / 2

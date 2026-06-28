@@ -1,5 +1,4 @@
 -- skeleton_spearman.lua
-local Push = require("system.push")
 local SkeletonSpearman = {}
 SkeletonSpearman.__index = SkeletonSpearman
 
@@ -24,8 +23,12 @@ function SkeletonSpearman:new(x, y)
     self.deadAnimationComplete = false
     self.hasHit = false
     
+    -- Juice: Knockback variables
+    self.knockbackX = 0
+    self.knockbackY = 0
+
     self.visionRange = 250
-    self.attackRange = 55 -- Longer reach than warrior (35)
+    self.attackRange = 55 
 
     self.animationSpeeds = {
         idle   = 0.12,
@@ -74,18 +77,18 @@ function SkeletonSpearman:update(dt, player, dungeon)
     end
 
     if self.state == "attack" then
-        -- Improved attack movement: wind-up and tracking lunge
+        -- Wind-up and tracking lunge
         local px, py = player:getCenter()
         local sx, sy = self:getCenter()
         local dy = py - sy
 
         if self.frame <= 1 then
-            -- Wind up: Move slightly back away from the direction we are facing
+            -- Wind up
             local windupSpeed = self.speed * 0.5
             local moveX = (self.direction == "right" and -1 or 1) * windupSpeed * dt
             self:move(moveX, 0, dungeon)
         elseif self.frame >= 2 and self.frame < 4 then
-            -- Thrust forward with high speed and slight Y tracking
+            -- Thrust forward
             local thrustSpeed = self.speed * 2.2
             local moveX = (self.direction == "right" and 1 or -1) * thrustSpeed * dt
             local moveY = (math.abs(dy) > 5) and (dy > 0 and 1 or -1) * (self.speed * 0.4) * dt or 0
@@ -118,6 +121,15 @@ function SkeletonSpearman:update(dt, player, dungeon)
     end
 
     self:handleAnimation(dt, player, dungeon)
+
+    -- Juice: Apply physics knockback
+    if self.knockbackX ~= 0 or self.knockbackY ~= 0 then
+        self:move(self.knockbackX * dt, self.knockbackY * dt, dungeon)
+        self.knockbackX = self.knockbackX * 0.85 -- Apply friction
+        self.knockbackY = self.knockbackY * 0.85
+        if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
+        if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+    end
 end
 
 function SkeletonSpearman:handleAnimation(dt, player, dungeon)
@@ -144,7 +156,6 @@ function SkeletonSpearman:handleAnimation(dt, player, dungeon)
                 self.frame = self.frame + 1
             else
                 self.deadAnimationComplete = true
-                -- Maintain the final frame for the corpse rendering
             end
         else
             if self.frame < maxFrames - 1 then
@@ -181,9 +192,21 @@ function SkeletonSpearman:takeDamage(amount, attacker, dungeon, kbMult)
     if self.hp > 0 then
         self.hp = self.hp - amount
         self.invuln = 0.5
-        local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
-        if pushDx and pushDy then
-            self:move(pushDx, pushDy, dungeon)
+        
+        -- Juice: Apply physics knockback
+        if attacker and type(attacker) == "table" then
+            local ax, ay = attacker.x, attacker.y
+            if attacker.getCenter then ax, ay = attacker:getCenter() end
+            
+            local dx = self.x - ax
+            local dy = self.y - ay
+            local dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0 then
+                local strength = 300 * (kbMult or 0.5) -- Scale push strength
+                self.knockbackX = (dx / dist) * strength
+                self.knockbackY = (dy / dist) * strength
+            end
         end
     end
 end
