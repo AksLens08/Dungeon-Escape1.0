@@ -190,23 +190,24 @@ function Dungeon:getLeftmostSpawnPoint(w, h, padding)
     return chosenSpot.x, chosenSpot.y
 end
 
-function Dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, padding)
-    -- Get world spawns
+function Dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, padding, knightX, knightY)
+    -- Get world spawns, avoiding the Knight's starting room
     if #self.walkableTiles == 0 then return {} end
     padding = padding or 0
+    knightX = knightX or 0
+    knightY = knightY or 0
 
-    local minX, maxX = math.huge, 0
-    for _, spot in ipairs(self.walkableTiles) do
-        if spot.x < minX then minX = spot.x end
-        if spot.x > maxX then maxX = spot.x end
-    end
-
-    local roomThreshold = (self.tileSize * 4) / self.gridSize
-    local safeRoomMaxX = minX + roomThreshold
+    -- JUICE: Set the safe radius around the Knight (adjust this number if needed)
+    local safeRadius = 120 
 
     local outsideSafeRoomTiles = {}
     for _, spot in ipairs(self.walkableTiles) do
-        if spot.x >= safeRoomMaxX then
+        local x = (spot.x - 0.5) * self.gridSize
+        local y = (spot.y - 0.5) * self.gridSize
+        
+        -- Only add tiles that are far enough away from the Knight
+        local distSq = (x - knightX)^2 + (y - knightY)^2
+        if distSq > safeRadius * safeRadius then
             table.insert(outsideSafeRoomTiles, spot)
         end
     end

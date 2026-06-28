@@ -273,9 +273,9 @@ function Wizard:takeDamage(amount, attacker, dungeon)
         Audio:play("hurt")
 
         -- Juice: Trigger hit effects
-        triggerHitstop(0.1)
-        triggerShake(0.3, 4)
-        spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
+        Effect:triggerHitstop(0.1)
+        Effect:triggerShake(0.3, 4)
+        Effect:spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
 
         -- Juice: Apply physics knockback
         if attacker and type(attacker) == "table" then

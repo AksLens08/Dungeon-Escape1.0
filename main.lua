@@ -19,9 +19,14 @@ local Spawner  = require("system.spawner")
 local Push     = require("system.push")
 Audio = require("Audios.audio")
 
+-- Modular systems
+Effect = require("system.effect")
+local Camera = require("system.camera")
+local UI = require("graphics.ui")
+
 -- Game state variables
 gameState = "menu"
-local mainMenu, player, dungeon, lighting, coins, isPaused, camera, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses
+local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses
 local jumpScareTimer, jumpScareDuration = 0, 2
 local caughtKM = nil
 local COINS_REQUIRED = 20
@@ -31,55 +36,6 @@ local gameWon = false
 gTextures, gFrames, gFonts = {}, {}, {}
 gMouse = { leftDown = false, rightDown = false }
 
--- ==========================================
--- JUICE SYSTEM (Hitstop, Shake, Particles)
--- ==========================================
-local hitstopTimer = 0
-local shakeTimer = 0
-local shakeMagnitude = 0
-local particles = {}
-
--- Freeze game logic
-function triggerHitstop(duration)
-    hitstopTimer = duration or 0.05 
-end
-
--- Shake camera
-function triggerShake(duration, magnitude)
-    shakeTimer = duration or 0.2
-    shakeMagnitude = magnitude or 2 -- Low magnitude because of 3x scale
-end
-
--- Spawn visual particles
-function spawnParticles(x, y, color, count)
-    for i = 1, (count or 8) do
-        table.insert(particles, {
-            x = x, y = y,
-            vx = love.math.random(-80, 80), 
-            vy = love.math.random(-80, 80), 
-            life = 0.5,                       
-            color = color or {1, 0, 0, 1}     
-        })
-    end
-end
-
--- Update juice timers
-function updateJuice(dt)
-    if hitstopTimer > 0 then hitstopTimer = hitstopTimer - dt end
-    if shakeTimer > 0 then
-        shakeTimer = shakeTimer - dt
-        if shakeTimer <= 0 then shakeMagnitude = 0 end
-    end
-    for i = #particles, 1, -1 do
-        local p = particles[i]
-        p.x = p.x + (p.vx * dt)
-        p.y = p.y + (p.vy * dt)
-        p.life = p.life - dt
-        if p.life <= 0 then table.remove(particles, i) end
-    end
-end
--- ==========================================
-
 -- Check win condition
 local function triggerWinIfReady()
     if not gameWon and coinsCollected >= COINS_REQUIRED then
@@ -87,54 +43,8 @@ local function triggerWinIfReady()
         gameState = "win"
         Audio:stop("background_music")
         Audio:play("victory_song")
+        Audio:stopHeartbeat()
     end
-end
-
--- Rect collision helper
-local function isWithinRect(x, y, rx, ry, rw, rh)
-    return x >= rx and x <= rx + rw and y >= ry and y <= ry + rh
-end
-
--- Draw Retry/Quit buttons
-local function drawRetryQuitButtons(sw, sh)
-    local btnW, btnH = 320, 80
-    local bx = (sw - btnW) / 2
-    local ry = sh * 0.5
-
-    love.graphics.setFont(gFonts["button"])
-    love.graphics.setColor(0.2, 0.2, 0.2, 1)
-    love.graphics.rectangle("fill", bx, ry, btnW, btnH)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.printf("RETRY", bx, ry + 20, btnW, "center")
-
-    love.graphics.setColor(0.2, 0.2, 0.2, 1)
-    love.graphics.rectangle("fill", bx, ry + 100, btnW, btnH)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.printf("QUIT", bx, ry + 120, btnW, "center")
-end
-
--- Draw Hero selection buttons
-local function drawSelectionButtons(sw, sh)
-    local btnW, btnH = 320, 80
-    local bx = (sw - btnW) / 2
-    local ry = sh * 0.45
-
-    love.graphics.setFont(gFonts["title"])
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf("SELECT HERO", 0, sh * 0.15, sw, "center")
-
-    love.graphics.setFont(gFonts["button"])
-    -- Knight
-    love.graphics.setColor(0.15, 0.15, 0.2, 0.9)
-    love.graphics.rectangle("fill", bx, ry, btnW, btnH, 5)
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf("KNIGHT", bx, ry + 20, btnW, "center")
-
-    -- Wizard
-    love.graphics.setColor(0.2, 0.15, 0.25, 0.9)
-    love.graphics.rectangle("fill", bx, ry + 110, btnW, btnH, 5)
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf("WIZARD", bx, ry + 130, btnW, "center")
 end
 
 -- Initialize game world
@@ -164,7 +74,6 @@ local function startGame()
     enemies = {}
     caughtKM = nil
 
-    -- Spawn Boss
     local kmX, kmY = dungeon:getRightmostSpawnPoint(KM.HITBOX_W, KM.HITBOX_H, SPAWN_PADDING)
     if kmX then
         local boss = KM:new(kmX, kmY)
@@ -172,37 +81,32 @@ local function startGame()
         table.insert(enemies, boss)
     end
 
-    -- Spawn Slimes
-    local slimeSpawns = dungeon:getSpawnPointsOutsideSafeRoom(18, BlueSlime.HITBOX_W, BlueSlime.HITBOX_H, SPAWN_PADDING)
+    local slimeSpawns = dungeon:getSpawnPointsOutsideSafeRoom(18, BlueSlime.HITBOX_W, BlueSlime.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
     local slimeClasses = { BlueSlime, RedSlime, GreenSlime }
     for i, pos in ipairs(slimeSpawns) do
         local classIndex = math.min(#slimeClasses, math.floor((i - 1) / 6) + 1)
         table.insert(enemies, slimeClasses[classIndex].new(pos.x, pos.y))
     end
 
-    -- Spawn Archers
-    local archerSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H, SPAWN_PADDING)
+    local archerSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
     for _, pos in ipairs(archerSpawns) do
         local s = SkeletonArcher:new(pos.x, pos.y)
         s.hp, s.maxHp = 250, 250
         table.insert(enemies, s)
     end
 
-    -- Spawn Warriors
-    local warriorSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H, SPAWN_PADDING)
+    local warriorSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
     for _, pos in ipairs(warriorSpawns) do
         table.insert(enemies, SkeletonWarrior:new(pos.x, pos.y))
     end
 
-    -- Spawn Spearmen
-    local spearmanSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H, SPAWN_PADDING)
+    local spearmanSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
     for _, pos in ipairs(spearmanSpawns) do
         local s = SkeletonSpearman:new(pos.x, pos.y)
         s.hp, s.maxHp = 250, 250
         table.insert(enemies, s)
     end
 
-    -- Spawn Coins
     coins = {}
     local attemptedCoins = 0
     local roomThreshold = dungeon.tileSize * 5
@@ -227,13 +131,16 @@ local function startGame()
     minimap = Minimap:new(dungeon)
     lighting = Lighting:new(player)
 
-    -- Init Camera
+    -- Initialize camera
     local sw = love.graphics.getWidth()
     local sh = love.graphics.getHeight()
     local worldScale = 3
     local playerCenterX, playerCenterY = player:getCenter()
-    camera.x = (playerCenterX * worldScale) - sw / 2
-    camera.y = (playerCenterY * worldScale) - sh / 2
+    local startX = (playerCenterX * worldScale) - sw / 2
+    local startY = (playerCenterY * worldScale) - sh / 2
+    Camera:init(startX, startY)
+    
+    Audio:resetHeartbeat()
 
     if Audio:isPlaying("menu_music") then Audio:stop("menu_music") end
     Audio:play("background_music")
@@ -253,16 +160,13 @@ function love.load()
     projectiles = {}
     enemies = {}
     corpses = {}
-    camera = { x = 0, y = 0 }
     
-    -- Fonts
     gFonts = {
         ["title"]  = love.graphics.newFont(120),
         ["button"] = love.graphics.newFont(40),
         ["hud"]    = love.graphics.newFont(20)
     }
 
-    -- Textures
     gTextures = {
         ["background"]     = safelyLoadImage("graphics/main-menu.png"),
         ["dungeon_layout"] = safelyLoadImage("graphics/dungeon.png"),
@@ -322,7 +226,6 @@ function love.load()
 
     Coin.load()
 
-    -- Fireball animation frames
     if gTextures["wizard_fire"] then
         gFrames["fireball_anim"] = {}
         for i = 0, 7 do
@@ -330,7 +233,6 @@ function love.load()
         end
     end
 
-    -- Jumpscare audio
     jumpScareSounds = {}
     local jsFiles = { "Audios/Jumpscare1.mp3", "Audios/Jumpscare2.mp3" }
     for _, path in ipairs(jsFiles) do
@@ -348,36 +250,28 @@ function love.load()
 end
 
 function love.update(dt)
-    -- Update Juice Timers (Always runs)
-    updateJuice(dt)
+    Effect:update(dt)
 
-    -- Hitstop Freeze Logic
-    if hitstopTimer > 0 then return end
+    if Effect:isHitstopActive() then return end
 
     if gameState == "play" and not player then startGame() end
 
-    -- Death Animation State
     if gameState == "dead" then
         if player then
-            player:update(dt, dungeon, gMouse, projectiles, camera, enemies)
-            local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
-            local worldScale = 3
-            local px, py = player:getCenter()
-            camera.x = (px * worldScale) - sw / 2
-            camera.y = (py * worldScale) - sh / 2
+            player:update(dt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
+            Camera:update(dt, player)
+            Audio:stopHeartbeat()
             if player.deadAnimationComplete then gameState = "gameover" end
         end
         return
     end
 
-    -- Main Gameplay Loop
     if gameState == "play" and player and not isPaused then
-        if minimap then minimap:update(player, enemies, coins, camera, dt) end
+        if minimap then minimap:update(player, enemies, coins, {x = Camera:getPosition()}, dt) end
 
         local projCountBefore = #projectiles
-        player:update(dt, dungeon, gMouse, projectiles, camera, enemies)
+        player:update(dt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
         
-        -- Play sound for new player projectiles
         for i = projCountBefore + 1, #projectiles do
             local p = projectiles[i]
             if p.type ~= "arrow" and (p.owner == "player" or p.owner == player) then
@@ -385,14 +279,9 @@ function love.update(dt)
             end
         end
         
-        -- Update Camera
-        local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
-        local worldScale = 3
-        local px, py = player:getCenter()
-        camera.x = (px * worldScale) - sw / 2
-        camera.y = (py * worldScale) - sh / 2
+        Camera:update(dt, player)
+        Audio:updateHeartbeat(dt, player, gameState)
 
-        -- Update Enemies
         if enemies then
             for i = #enemies, 1, -1 do
                 local enemy = enemies[i]
@@ -406,7 +295,6 @@ function love.update(dt)
                     end
                 end
                 
-                -- Boss Catch Logic
                 if enemy.caught and gameState == "play" then
                     gameState = "dead"
                     jumpScareTimer = 0
@@ -419,8 +307,8 @@ function love.update(dt)
                     end
                 end
 
-                -- Melee Collision (Player hits Enemy)
                 if (player.state == "attack" or player.state == "run_attack") and player.frame == 2 and enemy.hp > 0 then
+                    local px, py = player:getCenter()
                     local ex, ey = enemy.x + (enemy.w or 0) / 2, enemy.y + (enemy.h or 0) / 2
                     if enemy.getCenter then ex, ey = enemy:getCenter() end
                     
@@ -430,14 +318,12 @@ function love.update(dt)
                         local kbMult = (selectedClass == "wizard") and 0.5 or 1.0
                         enemy:takeDamage(player.damage, player, dungeon, kbMult)
                         
-                        -- MELEE JUICE
-                        triggerHitstop(0.06)
-                        triggerShake(0.15, 2)
-                        spawnParticles(ex, ey, {1, 0.2, 0.2, 1}, 6)
+                        Effect:triggerHitstop(0.06)
+                        Effect:triggerShake(0.15, 2)
+                        Effect:spawnParticles(ex, ey, {1, 0.2, 0.2, 1}, 6)
                     end
                 end
 
-                -- Enemy Death Logic
                 local isDeadAnimComplete = enemy.deadAnimationComplete
                 if type(isDeadAnimComplete) == "boolean" and isDeadAnimComplete then
                     local _, _, qw, qh = 0, 0, 0, 0
@@ -453,16 +339,14 @@ function love.update(dt)
                         frameHeight = enemy.frameHeight or qh,
                     })
                     
-                    -- DEATH JUICE
-                    triggerShake(0.2, 3)
-                    spawnParticles(enemy.x + (enemy.w or 20)/2, enemy.y + (enemy.h or 30)/2, {0.5, 0.1, 0.1, 1}, 12)
+                    Effect:triggerShake(0.2, 3)
+                    Effect:spawnParticles(enemy.x + (enemy.w or 20)/2, enemy.y + (enemy.h or 30)/2, {0.5, 0.1, 0.1, 1}, 12)
                     
                     table.remove(enemies, i)
                 end
             end
         end
 
-        -- Coin Collection
         local coinsBefore = player.coins
         Coin.updateAll(coins, dt, player)
         if player.coins ~= coinsBefore then
@@ -471,7 +355,6 @@ function love.update(dt)
             triggerWinIfReady()
         end
 
-        -- Projectile Updates
         for i = #projectiles, 1, -1 do
             local p = projectiles[i]
             p.x = p.x + p.vx * dt
@@ -484,29 +367,25 @@ function love.update(dt)
                 p.frame = (p.frame % 8) + 1
             end
 
-            -- Remove if out of bounds
             if p.life <= 0 or dungeon:isBlocked(p.x, p.y) or p.x < 0 or p.y < 0 or p.x > dungeon.width or p.y > dungeon.height then
                 table.remove(projectiles, i)
             else
                 local removed = false
                 
-                -- Enemy Projectile hits Player
                 if p.owner ~= "player" then
                     local ppx, ppy = player:getCenter()
                     if math.sqrt((p.x - ppx)^2 + (p.y - ppy)^2) < 10 and player.hp > 0 and (player.invuln or 0) <= 0 then
                         player:takeDamage(15, p.owner, dungeon)
                         
-                        -- PLAYER HIT JUICE
-                        triggerHitstop(0.1)
-                        triggerShake(0.3, 4)
-                        spawnParticles(ppx, ppy, {1, 0, 0, 1}, 10)
+                        Effect:triggerHitstop(0.1)
+                        Effect:triggerShake(0.3, 4)
+                        Effect:spawnParticles(ppx, ppy, {1, 0, 0, 1}, 10)
                         
                         table.remove(projectiles, i)
                         removed = true
                     end
                 end
 
-                -- Player Projectile hits Enemy
                 if not removed and p.owner == "player" then
                     for j = #enemies, 1, -1 do
                         local e = enemies[j]
@@ -517,10 +396,9 @@ function love.update(dt)
                             local kbMult = (selectedClass == "wizard") and 1.5 or 1.0
                             e:takeDamage(player.damage or 40, player, dungeon, kbMult)
                             
-                            -- PROJ HIT JUICE
-                            triggerHitstop(0.03)
-                            triggerShake(0.1, 1)
-                            spawnParticles(ex, ey, {1, 0.5, 0, 1}, 5)
+                            Effect:triggerHitstop(0.03)
+                            Effect:triggerShake(0.1, 1)
+                            Effect:spawnParticles(ex, ey, {1, 0.5, 0, 1}, 5)
                             
                             table.remove(projectiles, i)
                             removed = true
@@ -531,11 +409,12 @@ function love.update(dt)
             end
         end
 
-        -- Player Death Check
         if player.hp <= 0 and gameState == "play" then
             gameState = "dead"
             jumpScareTimer = 0
             Audio:stop("background_music")
+            Audio:stopHeartbeat()
+            
             if #jumpScareSounds > 0 then
                 local s = jumpScareSounds[math.random(#jumpScareSounds)]
                 s:play()
@@ -573,11 +452,11 @@ function love.mousepressed(x, y, button)
         local bx = (sw - btnW) / 2
         local ry = sh * 0.45
 
-        if isWithinRect(x, y, bx, ry, btnW, btnH) then
+        if UI:isWithinRect(x, y, bx, ry, btnW, btnH) then
             Audio:play("button_click")
             selectedClass = "knight"
             gameState = "play"
-        elseif isWithinRect(x, y, bx, ry + 110, btnW, btnH) then
+        elseif UI:isWithinRect(x, y, bx, ry + 110, btnW, btnH) then
             Audio:play("button_click")
             selectedClass = "wizard"
             gameState = "play"
@@ -588,13 +467,13 @@ function love.mousepressed(x, y, button)
         local bx = (sw - btnW) / 2
         local ry = sh * 0.5
 
-        if isWithinRect(x, y, bx, ry, btnW, btnH) then
+        if UI:isWithinRect(x, y, bx, ry, btnW, btnH) then
             Audio:play("button_click")
             player = nil
             isPaused = false
             Audio:stop("victory_song")
             gameState = "play"
-        elseif isWithinRect(x, y, bx, ry + 100, btnW, btnH) then
+        elseif UI:isWithinRect(x, y, bx, ry + 100, btnW, btnH) then
             Audio:play("button_click")
             love.event.quit()
         end
@@ -614,25 +493,19 @@ function love.draw()
         if mainMenu then mainMenu:render() end
     elseif gameState == "selection" then
         local sw, sh = love.graphics.getDimensions()
-        drawSelectionButtons(sw, sh)
+        UI:drawSelectionButtons(sw, sh, gFonts)
     elseif gameState == "play" or gameState == "dead" or gameState == "gameover" then
         
-        -- Calculate Screen Shake
-        local sx, sy = 0, 0
-        if shakeTimer > 0 then
-            sx = love.math.random(-shakeMagnitude, shakeMagnitude)
-            sy = love.math.random(-shakeMagnitude, shakeMagnitude)
-        end
+        local sx, sy = Effect:getShakeOffset()
+        local camX, camY = Camera:getPosition()
 
         love.graphics.push()
         love.graphics.scale(3, 3) 
-        -- Apply Camera + Shake
-        love.graphics.translate(-camera.x / 3 + sx, -camera.y / 3 + sy)
+        love.graphics.translate(-camX / 3 + sx, -camY / 3 + sy)
 
         if dungeon and type(dungeon.render) == "function" then dungeon:render() end
         if coins then Coin.drawAll(coins) end
 
-        -- Draw Corpses
         love.graphics.setColor(0.6, 0.6, 0.6, 0.8)
         for _, c in ipairs(corpses) do
             if c.texture and c.quad then
@@ -647,7 +520,6 @@ function love.draw()
         end
         love.graphics.setColor(1, 1, 1, 1)
 
-        -- Draw Enemies
         if enemies then
             for _, e in ipairs(enemies) do
                 if e and type(e.render) == "function" then
@@ -663,10 +535,8 @@ function love.draw()
             end
         end
 
-        -- Draw Player
         if player and type(player.render) == "function" then player:render() end
 
-        -- Draw Projectiles
         for _, p in ipairs(projectiles) do
             local tex, anim = gTextures["wizard_fire"], gFrames["fireball_anim"]
             if p.type == "arrow" then
@@ -681,20 +551,12 @@ function love.draw()
             end
         end
 
-        -- Draw Particles (On top of world)
-        for _, p in ipairs(particles) do
-            local alpha = math.max(0, p.life * 2) 
-            love.graphics.setColor(p.color[1], p.color[2], p.color[3], alpha)
-            love.graphics.rectangle("fill", p.x, p.y, 3, 3) -- 3x3 pixel particles
-        end
-        love.graphics.setColor(1, 1, 1, 1) 
+        Effect:drawParticles()
 
         love.graphics.pop()
 
-        -- Lighting Overlay
-        if lighting and player then lighting:render(camera.x, camera.y, 3) end
+        if lighting and player then lighting:render(camX, camY, 3) end
 
-        -- UI Layer (Not affected by shake)
         if player then player:drawHUD() end
         if minimap and player then minimap:draw() end
 
@@ -707,15 +569,13 @@ function love.draw()
         end
     end
 
-    -- End Game Screens
     if gameState == "dead" then
-        -- Handled in update loop mostly
     elseif gameState == "gameover" then
         love.graphics.setColor(1, 0, 0, 1)
         love.graphics.setFont(gFonts["title"])
         love.graphics.printf("YOU DIED", 0, love.graphics.getHeight()*0.2, love.graphics.getWidth(), "center")
         local sw, sh = love.graphics.getDimensions()
-        drawRetryQuitButtons(sw, sh)
+        UI:drawRetryQuitButtons(sw, sh, gFonts)
     elseif gameState == "win" then
         local img = gTextures["game_won"]
         local sw, sh = love.graphics.getDimensions()
@@ -728,6 +588,6 @@ function love.draw()
         love.graphics.setColor(1, 0.8, 0, 1)
         love.graphics.setFont(gFonts["title"])
         love.graphics.printf("VICTORY", 0, sh * 0.15, sw, "center")
-        drawRetryQuitButtons(sw, sh)
+        UI:drawRetryQuitButtons(sw, sh, gFonts)
     end
 end

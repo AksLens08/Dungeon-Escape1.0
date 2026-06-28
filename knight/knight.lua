@@ -247,9 +247,9 @@ function Knight:takeDamage(amount, attacker, dungeon)
         self.invuln = 0.8
 
         -- Juice: Trigger hit effects
-        triggerHitstop(0.1)
-        triggerShake(0.3, 4)
-        spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
+        Effect:triggerHitstop(0.1)
+        Effect:triggerShake(0.3, 4)
+        Effect:spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
 
         -- Juice: Apply physics knockback
         if attacker and type(attacker) == "table" then
@@ -369,7 +369,7 @@ function Knight:render()
         love.graphics.setColor(0.3, 0, 0)
     elseif self.attackTimer > 0 then
         love.graphics.setColor(1, 1, 0.7)
-    elseif self.invuln > 0 then
+    elseif self.state == "hurt" then -- FIXED: Only pulse red when in the "hurt" state
         local pulse = 0.5 + 0.5 * math.sin(love.timer.getTime() * 25)
         love.graphics.setColor(1, pulse, pulse)
     else
