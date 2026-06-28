@@ -1,9 +1,7 @@
 -- spawner.lua
--- Spawn helper
 local Spawner = {}
 
 local function isValidFloorTile(dungeon, x, y)
-    -- Check tile
     if not dungeon or not dungeon.collisionMap then
         return false
     end

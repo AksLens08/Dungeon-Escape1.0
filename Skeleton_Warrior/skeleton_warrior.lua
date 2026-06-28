@@ -1,6 +1,5 @@
 -- skeleton_warrior.lua
--- Resource-restoring melee enemy
-local Push = require("push")
+local Push = require("system.push")
 local SkeletonWarrior = {}
 SkeletonWarrior.__index = SkeletonWarrior
 
@@ -8,7 +7,6 @@ SkeletonWarrior.HITBOX_W = 20
 SkeletonWarrior.HITBOX_H = 30
 
 function SkeletonWarrior:new(x, y)
-    -- Setup stats
     local self = setmetatable({}, SkeletonWarrior)
     self.w, self.h = SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H
     self.x, self.y = x - self.w / 2, y - self.h / 2
@@ -30,7 +28,7 @@ function SkeletonWarrior:new(x, y)
     
     self.visionRange = 250
     self.attackRange = 35
-    self.keepDistance = 0 -- Melee behavior: doesn't back away
+    self.keepDistance = 0
 
     self.animations = {
         idle   = { frames = 7, speed = 0.12 },
@@ -46,12 +44,10 @@ function SkeletonWarrior:new(x, y)
 end
 
 function SkeletonWarrior:updateTexture()
-    -- Sync graphics
     local texKey = "skeleton_warrior_" .. self.state
     local texture = gTextures[texKey]
     local anim = self.animations[self.state]
 
-    -- Fallback safety check
     if not texture or not anim then
         texture = gTextures["skeleton_warrior_idle"]
         anim = self.animations.idle
@@ -69,7 +65,6 @@ function SkeletonWarrior:updateTexture()
 end
 
 function SkeletonWarrior:update(dt, player, dungeon, projectiles)
-    -- Core update
     if self.invuln > 0 then self.invuln = self.invuln - dt end
 
     if self.hp <= 0 then
@@ -86,7 +81,6 @@ function SkeletonWarrior:update(dt, player, dungeon, projectiles)
         self:updateTexture()
     end
 
-    -- Combat AI
     if self.state ~= "death" and self.state ~= "attack" then
         local px, py = player:getCenter()
         local sx, sy = self:getCenter()
@@ -98,14 +92,13 @@ function SkeletonWarrior:update(dt, player, dungeon, projectiles)
             if dist < self.attackRange and self.attackCooldown <= 0 then
                 self.state = "attack"
                 self.frame, self.timer = 0, 0
-                self.hasHit = false -- Melee specific
+                self.hasHit = false
                 if Audio then Audio:play("sword_slice") end
             elseif dist < self.keepDistance then
                 self.state = "walk"
                 local angle = math.atan2(dy, dx)
                 self:move(dungeon, math.cos(angle + math.pi) * self.speed * dt, math.sin(angle + math.pi) * self.speed * dt)
             elseif dist > self.attackRange then
-                -- Close in slightly
                 self.state = "walk"
                 local angle = math.atan2(dy, dx)
                 self:move(dungeon, math.cos(angle) * self.speed * dt, math.sin(angle) * self.speed * dt)
@@ -121,13 +114,11 @@ function SkeletonWarrior:update(dt, player, dungeon, projectiles)
 end
 
 function SkeletonWarrior:handleAnimation(dt, projectiles, player, dungeon)
-    -- Frame updates
     self.timer = self.timer + dt
     local anim = self.animations[self.state] or self.animations.idle
     if self.timer > anim.speed then
         self.timer = 0
 
-        -- Impact frame
         if self.state == "attack" and self.frame == 3 and not self.hasHit then
             local px, py = player:getCenter()
             local sx, sy = self:getCenter()
@@ -144,7 +135,6 @@ function SkeletonWarrior:handleAnimation(dt, projectiles, player, dungeon)
                 self.frame = self.frame + 1
             else
                 self.deadAnimationComplete = true
-                -- We do NOT reset self.frame to 0 here so it stays on the floor
             end
         else
             if self.frame < anim.frames - 1 then
@@ -162,7 +152,6 @@ function SkeletonWarrior:handleAnimation(dt, projectiles, player, dungeon)
 end
 
 function SkeletonWarrior:move(dungeon, dx, dy)
-    -- Wall collision
     if not dungeon then return end
 
     local steps = math.ceil(math.max(math.abs(dx), math.abs(dy)) / 2)
@@ -170,7 +159,6 @@ function SkeletonWarrior:move(dungeon, dx, dy)
     local stepX, stepY = dx / steps, dy / steps
 
     for i = 1, steps do
-        -- Check and move X and Y separately to allow sliding along walls
         if not dungeon:isColliding(self.x + stepX, self.y, self.w, self.h) then
             self.x = self.x + stepX
         end
@@ -181,7 +169,6 @@ function SkeletonWarrior:move(dungeon, dx, dy)
 end
 
 function SkeletonWarrior:takeDamage(amount, attacker, dungeon, kbMult)
-    -- Handle damage
     if self.invuln <= 0 and self.hp > 0 then
         self.hp = self.hp - amount
         self.invuln = 0.5
@@ -198,7 +185,7 @@ function SkeletonWarrior:takeDamage(amount, attacker, dungeon, kbMult)
         end
 
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, 15, kbMult or 0.5, false)
+            local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
             if pushDx and pushDy then
                 self:move(dungeon, pushDx, pushDy)
             end
@@ -209,7 +196,6 @@ end
 function SkeletonWarrior:getCenter() return self.x + self.w / 2, self.y + self.h / 2 end
 
 function SkeletonWarrior:render()
-    -- Draw entity
     if self.deadAnimationComplete or not self.texture then return end
     local scaleX = (self.direction == "right" and 1 or -1) * self.displayScale
     local pivotX, pivotY = self.x + self.w / 2, self.y + self.h
@@ -220,7 +206,6 @@ function SkeletonWarrior:render()
     love.graphics.draw(self.texture, self.quad, pivotX, pivotY, 0, scaleX, self.displayScale, self.frameWidth / 2, self.frameHeight)
     love.graphics.setColor(1, 1, 1)
 
-    -- Enemy HP bar
     if self.hp < self.maxHp and self.hp > 0 then
         love.graphics.setColor(0, 0, 0, 0.5)
         love.graphics.rectangle("fill", self.x, self.y - 10, self.w, 3)

@@ -1,5 +1,5 @@
 -- skeleton_spearman.lua
-local Push = require("push")
+local Push = require("system.push")
 local SkeletonSpearman = {}
 SkeletonSpearman.__index = SkeletonSpearman
 
@@ -18,6 +18,7 @@ function SkeletonSpearman:new(x, y)
     self.previousState = "idle"
     self.direction = "left"
     self.timer, self.frame = 0, 0
+    self.animationFrames = {}
     self.invuln = 0
     self.attackCooldown = 0
     self.deadAnimationComplete = false
@@ -26,14 +27,14 @@ function SkeletonSpearman:new(x, y)
     self.visionRange = 250
     self.attackRange = 55 -- Longer reach than warrior (35)
 
-    self.animations = {
-        idle   = { frames = 7, speed = 0.12 },
-        walk   = { frames = 7, speed = 0.10 },
-        attack = { frames = 4, speed = 0.07 },
-        death  = { frames = 5, speed = 0.15 }
+    self.animationSpeeds = {
+        idle   = 0.12,
+        walk   = 0.10,
+        attack = 0.07,
+        death  = 0.15
     }
     
-    self.targetHeight = 50
+    self.targetHeight, self.frameWidth, self.frameHeight = 50, 128, 128
     self.displayScale = 1.0
     self:updateTexture()
     return self
@@ -41,21 +42,16 @@ end
 
 function SkeletonSpearman:updateTexture()
     local texKey = "skeleton_spearman_" .. self.state
-    local texture = gTextures[texKey]
-    local anim = self.animations[self.state]
+    self.texture = gTextures[texKey] or gTextures["skeleton_spearman_idle"]
 
-    if not texture or not anim then
-        texture = gTextures["skeleton_spearman_idle"]
-        anim = self.animations.idle
-    end
-
-    self.texture = texture
     if self.texture then
         local sw, sh = self.texture:getDimensions()
-        self.frameWidth = sw / anim.frames
-        self.frameHeight = sh
-        self.displayScale = self.targetHeight / self.frameHeight
-        self.frame = self.frame % anim.frames
+        local maxFrames = math.max(1, math.floor(sw / self.frameWidth))
+        
+        self.animationFrames[self.state] = maxFrames
+        self.frame = self.frame % maxFrames
+        self.displayScale = self.targetHeight / 128
+
         self.quad = love.graphics.newQuad(self.frame * self.frameWidth, 0, self.frameWidth, self.frameHeight, sw, sh)
     end
 end
@@ -121,13 +117,15 @@ function SkeletonSpearman:update(dt, player, dungeon)
         end
     end
 
-    self:handleAnimation(dt, player)
+    self:handleAnimation(dt, player, dungeon)
 end
 
-function SkeletonSpearman:handleAnimation(dt, player)
+function SkeletonSpearman:handleAnimation(dt, player, dungeon)
     self.timer = self.timer + dt
-    local anim = self.animations[self.state] or self.animations.idle
-    if self.timer > anim.speed then
+    local maxFrames = self.animationFrames[self.state] or 1
+    local speed = self.animationSpeeds[self.state] or 0.1
+    
+    if self.timer > speed then
         self.timer = 0
 
         if self.state == "attack" and self.frame == 3 and not self.hasHit then
@@ -136,21 +134,20 @@ function SkeletonSpearman:handleAnimation(dt, player)
             local dx, dy = px - sx, py - sy
             local distSq = dx*dx + dy*dy
             if distSq < (self.attackRange + 10)^2 then
-                player:takeDamage(self.damage)
-                Push.execute(self, player, 15, 0.8)
+                player:takeDamage(self.damage, self, dungeon)
                 self.hasHit = true
             end
         end
 
         if self.state == "death" then
-            if self.frame < anim.frames - 1 then
+            if self.frame < maxFrames - 1 then
                 self.frame = self.frame + 1
             else
                 self.deadAnimationComplete = true
                 -- Maintain the final frame for the corpse rendering
             end
         else
-            if self.frame < anim.frames - 1 then
+            if self.frame < maxFrames - 1 then
                 self.frame = self.frame + 1
             else
                 if self.state == "attack" then 
@@ -180,11 +177,11 @@ function SkeletonSpearman:move(dx, dy, dungeon)
     end
 end
 
-function SkeletonSpearman:takeDamage(amount, attacker, dungeon)
+function SkeletonSpearman:takeDamage(amount, attacker, dungeon, kbMult)
     if self.hp > 0 then
         self.hp = self.hp - amount
         self.invuln = 0.5
-        local pushDx, pushDy = Push.execute(attacker, self, 15, 0.5, false)
+        local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
         if pushDx and pushDy then
             self:move(pushDx, pushDy, dungeon)
         end

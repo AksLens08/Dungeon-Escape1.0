@@ -1,7 +1,9 @@
 -- knight.lua
 -- Melee player
 local Class = require("system.class")
-local Push = require("push")
+local Push = require("system.push")
+local Movement = require("system.movement")
+local SpriteAnim = require("system.sprite_anim")
 local Knight = Class.define()
 Knight.HITBOX_W = 20
 Knight.HITBOX_H = 30
@@ -19,6 +21,7 @@ function Knight:init(x, y)
     self.hpRegenInterval = 2.5
     self.dx, self.dy, self.speed = 0, 0, 70
     self.stamina, self.maxStamina = 100, 100
+    self.isSprinting = false
     self.slideSide = nil
     self.state, self.previousState, self.direction = "idle", "idle", "right"
     self.attackVariant = nil
@@ -30,7 +33,7 @@ function Knight:init(x, y)
     self.frameWidth, self.frameHeight = 128, 128
     -- animationFrames will be dynamically updated by updateTexture
     self.animationSpeeds = {
-        idle = 0.12, walk = 0.08, run = 0.06, attack = 0.07, run_attack = 0.06,
+        idle = 0.12, walk = 0.08, run = 0.09, attack = 0.07, run_attack = 0.06,
         hurt = 0.1, death = 0.15, defend = 0.1
     }
     self.lightCenters = {
@@ -59,83 +62,12 @@ function Knight:updateTexture()
         self.animationFrames[self.state] = maxFrames -- Dynamically update frame count for current state
         self.frame = self.frame % maxFrames
         self.displayScale = 60 / self.frameHeight
-        self.quad = love.graphics.newQuad(self.frame * self.frameWidth, 0, self.frameWidth, self.frameHeight, sw, sh)
+        SpriteAnim.updateQuad(self)
     end
-end
-
-function Knight:tryMoveStep(map, stepX, stepY)
-    -- Wall slide
-    if not map:isColliding(self.x + stepX, self.y + stepY, self.w, self.h) then
-        self.x = self.x + stepX
-        self.y = self.y + stepY
-        self.slideSide = nil
-        return true
-    end
-
-    local len = math.sqrt(stepX * stepX + stepY * stepY)
-    if len == 0 then return false end
-
-    local perpX = -stepY / len
-    local perpY = stepX / len
-    local dirX = stepX / len
-    local dirY = stepY / len
-    local candidates = {}
-
-    local sideOrder = self.slideSide == -1 and {-1, 1} or {1, -1}
-    for offset = 0.5, 4, 0.5 do
-        for _, side in ipairs(sideOrder) do
-            local sidePenalty = self.slideSide == side and 0 or 0.2
-            table.insert(candidates, {
-                x = stepX + perpX * offset * side,
-                y = stepY + perpY * offset * side,
-                penalty = offset * 0.03 + sidePenalty,
-                side = side
-            })
-        end
-    end
-
-    local bestMove, bestScore = nil, -math.huge
-    for _, move in ipairs(candidates) do
-        local nextX = self.x + move.x
-        local nextY = self.y + move.y
-        if not map:isColliding(nextX, nextY, self.w, self.h) then
-            local forward = move.x * dirX + move.y * dirY
-            local score = forward - move.penalty
-            if score > bestScore then
-                bestMove = move
-                bestScore = score
-            end
-        end
-    end
-
-    if bestMove then
-        self.x = self.x + bestMove.x
-        self.y = self.y + bestMove.y
-        self.slideSide = bestMove.side or self.slideSide
-        return true
-    end
-
-    return false
 end
 
 function Knight:moveWithCollision(map, amountX, amountY)
-    -- Physics move
-    local steps = math.max(1, math.ceil(math.max(math.abs(amountX), math.abs(amountY))))
-    local stepX = amountX / steps
-    local stepY = amountY / steps
-    local moved = false
-
-    for _ = 1, steps do
-        if self:tryMoveStep(map, stepX, stepY) then
-            moved = true
-        end
-    end
-
-    if not moved then
-        self.dx = 0
-        self.dy = 0
-        self.slideSide = nil
-    end
+    Movement.moveWithCollision(self, map, amountX, amountY)
 end
 
 function Knight:update(dt, map, gMouse)
@@ -177,11 +109,21 @@ function Knight:update(dt, map, gMouse)
         end
 
         local isMoving = (moveX ~= 0 or moveY ~= 0)
-        local canRun = isShiftDown and self.stamina > 0 and isMoving
+
+        if isMoving and isShiftDown then
+            if not self.isSprinting and self.stamina >= 20 then
+                self.isSprinting = true
+            end
+        else
+            self.isSprinting = false
+        end
+        if self.stamina <= 0 then self.isSprinting = false end
+
+        local canRun = self.isSprinting
         local currentSpeed = self.speed
 
         if canRun then
-            currentSpeed = self.speed * 1.6 -- Running speed multiplier
+            currentSpeed = self.speed * 1.3 -- Reduced multiplier to fix blurriness/jitter
             self.stamina = math.max(0, self.stamina - 25 * dt) -- Stamina drain per second
         else
             self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt) -- Stamina regeneration
@@ -204,8 +146,10 @@ function Knight:update(dt, map, gMouse)
         -- States
         if self.invuln > 0.7 then
             self.state = "hurt"
+            self.attackTimer = 0 -- Cancel attack if interrupted by damage
         elseif (gMouse and gMouse.rightDown) then
             self.state = "defend"
+            self.attackTimer = 0 -- Cancel attack if player chooses to defend
         elseif self.attackTimer > 0 then -- If an attack is in progress, maintain its state.
             -- This ensures the animation plays out unless interrupted by higher priority states (hurt/defend).
             -- The state was already set to "attack" or "run_attack" when the attack started.
@@ -224,7 +168,7 @@ function Knight:update(dt, map, gMouse)
         elseif isMoving then self.state = "walk"
         else self.state = "idle" end
     end -- End of if self.hp <= 0 else block
-    if self.state == "attack" or self.state == "run_attack" then 
+    if self.attackTimer > 0 then 
         self.attackTimer = self.attackTimer - dt 
     end
 
@@ -294,7 +238,7 @@ function Knight:takeDamage(amount, attacker, dungeon)
 
         -- Knockback
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, 15, 0.5, false)
+            local pushDx, pushDy = Push.execute(attacker, self, amount, 0.5, false)
             if pushDx and pushDy and dungeon then
                 self:moveWithCollision(dungeon, pushDx, pushDy)
             end
@@ -366,7 +310,7 @@ function Knight:drawHUD()
         love.graphics.setColor(0.8, 0.7, 0.5, 1)
         love.graphics.print(label, x, y - 22)
         love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf(math.ceil(current) .. " " .. subLabel, x, y + 4, barW, "center")
+        love.graphics.printf(math.max(0, math.ceil(current)) .. " " .. subLabel, x, y + 4, barW, "center")
     end
 
     -- Draw Health

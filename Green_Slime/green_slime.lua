@@ -1,5 +1,5 @@
 -- green_slime.lua
-local Push = require("push")
+local Push = require("system.push")
 
 local GreenSlime = {}
 GreenSlime.__index = GreenSlime
@@ -19,7 +19,7 @@ function GreenSlime:init(x, y)
     
     self.type = "enemy"
     self.subType = "slime"
-    self.minimapColor = {0.2, 1, 0.2} -- Green color for minimap
+    self.minimapColor = {0.2, 1, 0.2}
 
     self.hp, self.maxHp, self.damage = 30, 30, 10
     self.dx, self.dy = 0, 0
@@ -87,12 +87,11 @@ function GreenSlime:update(dt, player, dungeon)
 
     self:handleAnimation(dt)
 
-    -- Check for damage during the active lunge frames (1 and 2)
     if self.state == "attack" and (self.frame >= 1 and self.frame <= 2) and not self.hasHit then
         local px, py = player:getCenter()
         local sx, sy = self:getCenter()
         local distSq = (px - sx)^2 + (py - sy)^2
-        if distSq < 625 then -- 25 pixel reach (matches the AI trigger distance)
+        if distSq < 625 then
             player:takeDamage(self.damage, self, dungeon)
             self.hasHit = true
         end
@@ -146,7 +145,6 @@ end
 function GreenSlime:move(map, amountX, amountY)
     if not map then return end
 
-    -- Stepped movement prevents tunneling and allows sliding along walls
     local steps = math.ceil(math.max(math.abs(amountX), math.abs(amountY)) / 2)
     if steps == 0 then return end
     local stepX, stepY = amountX / steps, amountY / steps
@@ -186,8 +184,6 @@ function GreenSlime:takeDamage(amount, attacker, dungeon, kbMult)
         Audio:play("slime_hurt")
 
         if self.hp <= 0 then
-            -- Heal player on defeat
-            -- Audio:play("slime_hurt") -- Already played above, but could be played again for a "death sound" variant
             if attacker then
                 if attacker.heal then attacker:heal(20) end
             end
@@ -195,9 +191,8 @@ function GreenSlime:takeDamage(amount, attacker, dungeon, kbMult)
             self.state, self.frame, self.timer = "hurt", 0, 0; self:updateTexture()
         end
 
-        -- Use the passed multiplier, or default to 0.5 for slimes
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, 15, kbMult or 0.5, false)
+            local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
             if pushDx and pushDy then
                 self:move(dungeon, pushDx, pushDy)
             end

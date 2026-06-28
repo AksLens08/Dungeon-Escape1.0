@@ -14,8 +14,8 @@ local SkeletonArcher = require("Skeleton_Archer.skeleton_archer")
 local SkeletonWarrior = require("Skeleton_Warrior.skeleton_warrior")
 local SkeletonSpearman = require("Skeleton_Spearman.skeleton_spearman")
 local Minimap  = require("graphics.minimap")
-local Spawner  = require("spawner")
-local Push     = require("push")
+local Spawner  = require("system.spawner")
+local Push     = require("system.push")
 Audio = require("Audios.audio")
 
 gameState = "menu"
@@ -244,6 +244,7 @@ function love.load()
         ["wizard_fire"]    = safelyLoadImage("wizard/Fireball.png"),
         ["wizard_charge"]  = safelyLoadImage("wizard/Charge.png"),
         ["wizard_hurt"]    = safelyLoadImage("wizard/Hurt.png"),
+        ["wizard_run"]     = safelyLoadImage("wizard/Run.png"), -- Add wizard run texture
         ["blue_slime_idle"]   = safelyLoadImage("Blue_slime/Idle.png"),
         ["blue_slime_walk"]   = safelyLoadImage("Blue_slime/Walk.png") or safelyLoadImage("Blue_slime/Hop.png"),
         ["blue_slime_attack"] = safelyLoadImage("Blue_slime/Attack_1.png"),
@@ -307,9 +308,18 @@ function love.update(dt)
     end
 
     if gameState == "dead" then
-        jumpScareTimer = jumpScareTimer + dt
-        if jumpScareTimer > jumpScareDuration then
-            gameState = "gameover"
+        if player then
+            player:update(dt, dungeon, gMouse, projectiles, camera, enemies)
+            
+            local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
+            local worldScale = 3
+            local playerCenterX, playerCenterY = player:getCenter()
+            camera.x = (playerCenterX * worldScale) - sw / 2
+            camera.y = (playerCenterY * worldScale) - sh / 2
+
+            if player.deadAnimationComplete then
+                gameState = "gameover"
+            end
         end
         return
     end
@@ -319,8 +329,11 @@ function love.update(dt)
 
         local projCountBefore = #projectiles
         player:update(dt, dungeon, gMouse, projectiles, camera, enemies)
-        for _ = projCountBefore + 1, #projectiles do
-            Audio:play("fireball") 
+        for i = projCountBefore + 1, #projectiles do
+            local p = projectiles[i]
+            if p.type ~= "arrow" and (p.owner == "player" or p.owner == player) then
+                Audio:play("fireball")
+            end
         end
         
         local sw, sh = love.graphics.getWidth(), love.graphics.getHeight()
@@ -334,8 +347,11 @@ function love.update(dt)
                 local enemy = enemies[i]
                 local projectileCountBefore = #projectiles
                 enemy:update(dt, player, dungeon, projectiles)
-                for _ = projectileCountBefore + 1, #projectiles do
-                    Audio:play("fireball")
+                for pIdx = projectileCountBefore + 1, #projectiles do
+                    local p = projectiles[pIdx]
+                    if p.type ~= "arrow" and (p.owner == "player" or p.owner == player) then
+                        Audio:play("fireball")
+                    end
                 end
                 
                 if enemy.caught and gameState == "play" then
@@ -406,14 +422,18 @@ function love.update(dt)
             local p = projectiles[i]
             p.x = p.x + p.vx * dt
             p.y = p.y + p.vy * dt
+            p.life = (p.life or 3) - dt
             
             p.timer = (p.timer or 0) + dt
-            if p.timer > 0.08 then
+            if p.frame and p.timer > 0.08 then
                 p.timer = 0
                 p.frame = (p.frame % 8) + 1
             end
 
-            if dungeon:isBlocked(p.x, p.y) then
+            if p.life <= 0
+                or dungeon:isBlocked(p.x, p.y)
+                or p.x < 0 or p.y < 0
+                or p.x > dungeon.width or p.y > dungeon.height then
                 table.remove(projectiles, i)
             else
                 local removed = false
@@ -618,25 +638,10 @@ function love.draw()
     end
 
     if gameState == "dead" then
-        -- Death visuals
-        local img = gTextures["km_caught"]
-        local sw, sh = love.graphics.getDimensions()
-        if img then
-            local iw, ih = img:getDimensions()
-            local scale = math.max(sw / iw, sh / ih)
-            love.graphics.setColor(1, 1, 1)
-            love.graphics.draw(img, sw / 2, sh / 2, 0, scale, scale, iw / 2, ih / 2)
-        end
-
-        love.graphics.setColor(1, 0, 0, 1)
-        love.graphics.setFont(gFonts["title"])
-        love.graphics.printf("KM GOT YOU", 0, sh * 0.2, sw, "center")
-
-        drawRetryQuitButtons(sw, sh)
     elseif gameState == "gameover" then
         love.graphics.setColor(1, 0, 0, 1)
         love.graphics.setFont(gFonts["title"])
-        love.graphics.printf("GAME OVER", 0, love.graphics.getHeight()*0.2, love.graphics.getWidth(), "center")
+        love.graphics.printf("YOU DIED", 0, love.graphics.getHeight()*0.2, love.graphics.getWidth(), "center")
 
         local sw, sh = love.graphics.getDimensions()
         drawRetryQuitButtons(sw, sh)

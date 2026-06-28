@@ -3,6 +3,7 @@
 local Audio = {}
 local sounds = {}
 local activeClones = {}
+local MAX_ACTIVE_CLONES = 32
 
 function Audio:load()
     -- Load SFX/Music
@@ -58,7 +59,7 @@ function Audio:play(name)
     if s then
         if s:isLooping() then
             s:play()
-        else
+        elseif #activeClones < MAX_ACTIVE_CLONES then
             local success, instance = pcall(function() return s:clone() end)
             if not success then return end
             

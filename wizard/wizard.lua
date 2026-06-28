@@ -1,6 +1,8 @@
 -- wizard.lua
 -- Wizard player
-local Push = require("push")
+local Push = require("system.push")
+local Movement = require("system.movement")
+local SpriteAnim = require("system.sprite_anim")
 
 local Wizard = {}
 Wizard.__index = Wizard
@@ -21,32 +23,37 @@ function Wizard:init(x, y)
     self.baseDamage = 20 -- Store base damage for buff calculations
     self.buffTimer = 0
     self.hpRegenTimer, self.hpRegenInterval = 0, 2.5
-    self.dx, self.dy, self.speed = 0, 0, 85
+    self.dx, self.dy, self.speed = 0, 0, 70 -- Base speed matched to Knight
+    self.stamina, self.maxStamina = 100, 100 -- Add stamina
+    self.isSprinting = false
     self.slideSide = nil
     
     self.state, self.previousState, self.direction = "idle", "idle", "right"
     self.timer, self.frame = 0, 0
+    self.animationFrames = {} -- Store detected frame counts
     self.attackTimer, self.attackCooldown = 0, 0
     self.invuln = 0
     
     self.targetHeight = 58
     self.displayScale = 1.0
-    self.frameWidth, self.frameHeight = 0, 0
+    self.frameWidth, self.frameHeight = 128, 128
     self.lightCenters = {
         idle   = { x = 64, y = 64 },
         walk   = { x = 64, y = 64 },
+        run    = { x = 64, y = 64 },
         attack = { x = 64, y = 64 },
         flame  = { x = 64, y = 64 },
         death  = { x = 64, y = 64 }
     }
 
-    self.animations = {
-        idle   = { frames = 7, speed = 0.12 }, 
-        walk   = { frames = 6, speed = 0.09 }, 
-        attack = { frames = 4, speed = 0.0875 },
-        flame  = { frames = 14, speed = 0.06 },
-        death  = { frames = 6, speed = 0.12 },
-        hurt   = { frames = 3, speed = 0.1 }
+    self.animationSpeeds = {
+        idle   = 0.12, 
+        walk   = 0.11,
+        run    = 0.09,
+        attack = 0.0875,
+        flame  = 0.06,
+        death  = 0.12,
+        hurt   = 0.1
     }
     
     self:updateTexture()
@@ -58,62 +65,8 @@ function Wizard.new(x, y)
     return self
 end
 
-function Wizard:tryMoveStep(map, stepX, stepY)
-    -- Wall slide
-    if not map:isColliding(self.x + stepX, self.y + stepY, self.w, self.h) then
-        self.x = self.x + stepX
-        self.y = self.y + stepY
-        self.slideSide = nil
-        return true
-    end
-
-    local len = math.sqrt(stepX * stepX + stepY * stepY)
-    if len == 0 then return false end
-
-    local perpX, perpY = -stepY / len, stepX / len
-    local dirX, dirY = stepX / len, stepY / len
-    local candidates = {}
-
-    local sideOrder = self.slideSide == -1 and {-1, 1} or {1, -1}
-    for offset = 0.5, 4, 0.5 do
-        for _, side in ipairs(sideOrder) do
-            table.insert(candidates, {
-                x = stepX + perpX * offset * side,
-                y = stepY + perpY * offset * side,
-                penalty = offset * 0.03 + (self.slideSide == side and 0 or 0.2),
-                side = side
-            })
-        end
-    end
-
-    local bestMove, bestScore = nil, -math.huge
-    for _, move in ipairs(candidates) do
-        if not map:isColliding(self.x + move.x, self.y + move.y, self.w, self.h) then
-            local score = (move.x * dirX + move.y * dirY) - move.penalty
-            if score > bestScore then
-                bestMove, bestScore = move, score
-            end
-        end
-    end
-
-    if bestMove then
-        self.x, self.y, self.slideSide = self.x + bestMove.x, self.y + bestMove.y, bestMove.side
-        return true
-    end
-    return false
-end
-
 function Wizard:moveWithCollision(map, amountX, amountY)
-    -- Collision move
-    local steps = math.max(1, math.ceil(math.max(math.abs(amountX), math.abs(amountY))))
-    local stepX, stepY = amountX / steps, amountY / steps
-    local moved = false
-    for _ = 1, steps do
-        if self:tryMoveStep(map, stepX, stepY) then moved = true end
-    end
-    if not moved then
-        self.dx, self.dy, self.slideSide = 0, 0, nil
-    end
+    Movement.moveWithCollision(self, map, amountX, amountY)
 end
 
 function Wizard:updateTexture()
@@ -122,14 +75,13 @@ function Wizard:updateTexture()
     self.texture = gTextures[texKey] or gTextures["wizard_idle"]
     if self.texture then
         local sw, sh = self.texture:getDimensions()
-        local anim = self.animations[self.state] or self.animations.idle
+        local maxFrames = math.max(1, math.floor(sw / self.frameWidth))
         
-        self.frameWidth = sw / anim.frames
-        self.frameHeight = sh
-        self.displayScale = self.targetHeight / self.frameHeight
+        self.animationFrames[self.state] = maxFrames
+        self.frame = self.frame % maxFrames
+        self.displayScale = self.targetHeight / 128 -- Use standard cell height
 
-        self.frame = self.frame % anim.frames
-        self.quad = love.graphics.newQuad(self.frame * self.frameWidth, 0, self.frameWidth, self.frameHeight, sw, sh)
+        SpriteAnim.updateQuad(self)
     end
 end
 
@@ -160,6 +112,8 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
 
         self.mana = math.min(self.maxMana, self.mana + 1 * dt)
 
+        local isShiftDown = love.keyboard.isDown("lshift", "rshift") -- Add isShiftDown
+
         local inputX, inputY = 0, 0
         -- Freeze movement
         if self.state ~= "flame" then
@@ -169,13 +123,36 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
             if love.keyboard.isDown("d", "right") then inputX, self.direction = 1, "right" end
         end
 
+        local isMoving = (inputX ~= 0 or inputY ~= 0) -- Define isMoving
+
+        if isMoving and isShiftDown then
+            if not self.isSprinting and self.stamina >= 20 then
+                self.isSprinting = true
+            end
+        else
+            self.isSprinting = false
+        end
+        if self.stamina <= 0 then self.isSprinting = false end
+
+        local canRun = self.isSprinting
+        local currentSpeed = self.speed -- Base speed
+
+        if canRun then
+            currentSpeed = self.speed * 1.3 -- Running speed multiplier (same as Knight)
+            self.stamina = math.max(0, self.stamina - 25 * dt) -- Stamina drain (same as Knight)
+        else
+            self.stamina = math.min(self.maxStamina, self.stamina + 15 * dt) -- Stamina regen (same as Knight)
+        end
+
         -- Physics
         local mag = (inputX ~= 0 and inputY ~= 0) and 0.7071 or 1
-        local targetDx = inputX * self.speed * mag
-        local targetDy = inputY * self.speed * mag
+        local targetDx = inputX * currentSpeed * mag
+        local targetDy = inputY * currentSpeed * mag
 
         local isStopping = (inputX == 0 and inputY == 0)
-        local weight = isStopping and 12 or 20
+        local isTurning = (inputX > 0 and self.dx < 0) or (inputX < 0 and self.dx > 0)
+        local weight = isTurning and 45 or (isStopping and 12 or 20)
+        
         local lerpFactor = 1 - math.exp(-weight * dt)
         self.dx = self.dx + (targetDx - self.dx) * lerpFactor
         self.dy = self.dy + (targetDy - self.dy) * lerpFactor
@@ -188,22 +165,26 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
             Audio:stop("footsteps")
         end
 
-        if gMouse.rightDown and self.attackCooldown <= 0 and self.mana >= 20 and projectiles then
+        if gMouse.rightDown and self.attackCooldown <= 0 and self.mana >= 20
+            and self.attackTimer <= 0 and self.state ~= "flame" and projectiles then
             self.state = "flame"
+            self.flameHitDone = false
             self.mana = self.mana - 20 -- Flame Jet costs 20 Mana
             Audio:play("fireball")
             self.dx, self.dy = 0, 0
             self.attackTimer = 0.84 -- matches the 14-frame animation duration (14 * 0.06)
             self.attackCooldown = 1.0
-        elseif gMouse.leftDown and self.attackCooldown <= 0 then
+        elseif gMouse.leftDown and self.attackCooldown <= 0 and self.attackTimer <= 0 then
             self.state = "attack"
-            if self.attackTimer <= 0 then self.attackTimer = 0.35 end
+            self.attackTimer = 0.35
             Audio:play("sword_slice")
             self.attackCooldown = 1.0
         elseif self.invuln > 0.6 then
             self.state = "hurt"
-        elseif self.attackTimer > 0 then
-            -- Hold the attack/flame state until the timer expires
+            self.attackTimer = 0 -- Cancel spells if interrupted by damage
+        elseif self.attackTimer > 0 and (self.state == "flame" or self.state == "attack") then
+            -- Hold attack animation until the timer finishes
+        elseif canRun then self.state = "run" -- Add run state
         elseif math.abs(self.dx) > 2 or math.abs(self.dy) > 2 then
             self.state = "walk"
         else
@@ -217,20 +198,30 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
         self:updateTexture()
     end
 
-    if self.state == "flame" and self.frame >= 6 and self.frame <= 10 and enemies then
+    if self.state == "flame" and self.frame == 8 and not self.flameHitDone and enemies then
+        self.flameHitDone = true
         local px, py = self:getCenter()
         for _, enemy in ipairs(enemies) do
             if enemy.hp > 0 then
                 local ex, ey = enemy.x + enemy.w / 2, enemy.y + enemy.h / 2
+                if enemy.getCenter then ex, ey = enemy:getCenter() end
                 local dx, dy = ex - px, ey - py
                 local distSq = dx * dx + dy * dy
                 local isFacing = (self.direction == "right" and dx > 0) or (self.direction == "left" and dx < 0)
 
-                if isFacing and distSq < 3600 then -- 60 pixel range (twice the melee reach)
-                    enemy:takeDamage(40, self, dungeon) -- Flame Jet damage set to 40
+                if isFacing and distSq < 3600 then
+                    enemy:takeDamage(40, self, dungeon)
                 end
             end
         end
+    end
+
+    if self.attackTimer > 0 then
+        self.attackTimer = self.attackTimer - dt
+    end
+
+    if self.state == "flame" or self.state == "attack" then
+        self.dx, self.dy = 0, 0
     end
 
     self:handleAnimation(dt)
@@ -240,9 +231,9 @@ end
 function Wizard:handleAnimation(dt)
     -- Animation loop
     self.timer = self.timer + dt
-    local anim = self.animations[self.state] or self.animations.idle
-    local maxFrames = anim.frames
-    local frameDuration = anim.speed
+    local maxFrames = self.animationFrames[self.state] or 1
+    local frameDuration = self.animationSpeeds[self.state] or 0.1
+    
     if self.timer > frameDuration then
         self.timer = 0
 
@@ -266,7 +257,7 @@ function Wizard:takeDamage(amount, attacker, dungeon)
 
         -- Knockback
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, 10, 0.8, false)
+            local pushDx, pushDy = Push.execute(attacker, self, amount, 0.8, false)
             if pushDx and pushDy and dungeon then
                 self:moveWithCollision(dungeon, pushDx, pushDy)
             end
@@ -336,7 +327,7 @@ function Wizard:drawHUD()
         love.graphics.setColor(0.8, 0.7, 0.5, 1)
         love.graphics.print(label, x, y - 22)
         love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf(math.ceil(current) .. " " .. subLabel, x, y + 4, barW, "center")
+        love.graphics.printf(math.max(0, math.ceil(current)) .. " " .. subLabel, x, y + 4, barW, "center")
     end
 
     -- Draw Health
@@ -347,11 +338,15 @@ function Wizard:drawHUD()
     local manaX, manaY = margin + 5, hpY + barH + 35
     drawMedievalBar(manaX, manaY, self.mana, self.maxMana, "MANA BAR", {0.3, 0.1, 0.6}, "/ " .. self.maxMana)
 
+    -- Draw Stamina
+    local staX, staY = margin + 5, manaY + barH + 35
+    drawMedievalBar(staX, staY, self.stamina, self.maxStamina, "STAMINA", {0.2, 0.6, 0.2}, "/ " .. self.maxStamina)
+
     -- Coin Counter
     love.graphics.setColor(0, 0, 0, 0.6)
-    love.graphics.rectangle("fill", margin, manaY + barH + 15, 140, 30, 4)
+    love.graphics.rectangle("fill", margin, staY + barH + 15, 140, 30, 4)
     love.graphics.setColor(0.9, 0.8, 0.5, 1)
-    love.graphics.print("COINS: " .. (self.coins or 0) .. " / 20", margin + 10, manaY + barH + 20)
+    love.graphics.print("COINS: " .. (self.coins or 0) .. " / 20", margin + 10, staY + barH + 20)
     
     love.graphics.setLineWidth(1)
     -- Clean up draw state
@@ -360,7 +355,6 @@ end
 function Wizard:handleInput(key) end
 
 function Wizard:render()
-    if self.deadAnimationComplete then return end
     
     if self.texture and self.quad then
         local scaleX = (self.direction == "right" and 1 or -1) * self.displayScale

@@ -1,6 +1,5 @@
 -- red_slime.lua
--- Aggressive buff slime
-local Push = require("push")
+local Push = require("system.push")
 
 local RedSlime = {}
 RedSlime.__index = RedSlime
@@ -15,7 +14,6 @@ function RedSlime.new(x, y)
 end
 
 function RedSlime:init(x, y)
-    -- Stats and type
     self.w, self.h = RedSlime.HITBOX_W, RedSlime.HITBOX_H
     self.x, self.y = x - self.w / 2, y - self.h / 2
     
@@ -54,7 +52,6 @@ function RedSlime:init(x, y)
 end
 
 function RedSlime:updateTexture()
-    -- Select sprite
     local texKey = "red_slime_" .. self.state
     self.texture = gTextures[texKey] or gTextures["red_slime_idle"]
     if self.texture then
@@ -71,7 +68,6 @@ function RedSlime:updateTexture()
 end
 
 function RedSlime:update(dt, player, dungeon)
-    -- Logic update
     if self.invuln > 0 then self.invuln = self.invuln - dt end
 
     if self.hp <= 0 then
@@ -91,12 +87,11 @@ function RedSlime:update(dt, player, dungeon)
 
     self:handleAnimation(dt)
 
-    -- Check for damage during the active lunge frames (1 and 2)
     if self.state == "attack" and (self.frame >= 1 and self.frame <= 2) and not self.hasHit then
         local px, py = player:getCenter()
         local sx, sy = self:getCenter()
         local distSq = (px - sx)^2 + (py - sy)^2
-        if distSq < 625 then -- 25 pixel reach (matches the AI trigger distance)
+        if distSq < 625 then
             player:takeDamage(self.damage, self, dungeon)
             self.hasHit = true
         end
@@ -108,7 +103,6 @@ function RedSlime:update(dt, player, dungeon)
 end
 
 function RedSlime:updateAI(dt, player, dungeon)
-    -- State-based AI
     local px, py = player:getCenter()
     local sx, sy = self:getCenter()
     local dx, dy = px - sx, py - sy
@@ -151,7 +145,6 @@ end
 function RedSlime:move(map, amountX, amountY)
     if not map then return end
 
-    -- Stepped movement prevents tunneling and allows sliding along walls
     local steps = math.ceil(math.max(math.abs(amountX), math.abs(amountY)) / 2)
     if steps == 0 then return end
     local stepX, stepY = amountX / steps, amountY / steps
@@ -167,7 +160,6 @@ function RedSlime:move(map, amountX, amountY)
 end
 
 function RedSlime:handleAnimation(dt)
-    -- Frame timing
     self.timer = self.timer + dt
     local anim = self.animations[self.state] or self.animations.idle
     if self.timer > anim.speed then
@@ -186,13 +178,11 @@ function RedSlime:handleAnimation(dt)
 end
 
 function RedSlime:takeDamage(amount, attacker, dungeon, kbMult)
-    -- Damage and buffs
     if self.invuln <= 0 and self.hp > 0 then
         self.hp = self.hp - amount
         self.invuln = 0.4
         Audio:play("slime_hurt")
 
-        -- Grant player buff
         if self.hp <= 0 then
             if attacker and attacker.applyAttackBuff then
                 attacker:applyAttackBuff(10)
@@ -202,7 +192,7 @@ function RedSlime:takeDamage(amount, attacker, dungeon, kbMult)
         end
 
         if attacker and type(attacker) == "table" then
-            local pushDx, pushDy = Push.execute(attacker, self, 15, kbMult or 0.5, false)
+            local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
             if pushDx and pushDy then
                 self:move(dungeon, pushDx, pushDy)
             end

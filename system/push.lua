@@ -1,17 +1,14 @@
 -- push.lua
--- Knockback math
 local Push = {}
 
 function Push.execute(actor, target, power, multiplier, isCritical)
-    -- Force calc
     local totalPower = (power or 10) * (multiplier or 1)
     if isCritical then totalPower = totalPower * 2 end
 
-    if not target or not target.x or not target.y then
+    if not target or not target.x or not target.y or not actor or not actor.x or not actor.y then
         return nil, nil
     end
 
-    -- Dir vector
     local dx = target.x - actor.x
     local dy = target.y - actor.y
     local mag = math.sqrt(dx * dx + dy * dy)

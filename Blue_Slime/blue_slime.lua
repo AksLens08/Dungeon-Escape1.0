@@ -1,5 +1,5 @@
 -- blue_slime.lua
-local Push = require("push")
+local Push = require("system.push")
 
 local Slime = {}
 Slime.__index = Slime
@@ -209,7 +209,7 @@ function Slime:takeDamage(amount, attacker, dungeon, kbMult)
         end
 
         -- Use the passed multiplier, or default to 0.5 for slimes
-        local pushDx, pushDy = Push.execute(attacker, self, 15, kbMult or 0.5, false)
+        local pushDx, pushDy = Push.execute(attacker, self, amount, kbMult or 0.5, false)
         if pushDx and pushDy then
             self:move(dungeon, pushDx, pushDy) -- Use the renamed move function
         end
