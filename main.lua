@@ -36,9 +36,20 @@ local gameWon = false
 gTextures, gFrames, gFonts = {}, {}, {}
 gMouse = { leftDown = false, rightDown = false }
 
--- Check win condition
+-- Check win condition (Coins)
 local function triggerWinIfReady()
     if not gameWon and coinsCollected >= COINS_REQUIRED then
+        gameWon = true
+        gameState = "win"
+        Audio:stop("background_music")
+        Audio:play("victory_song")
+        Audio:stopHeartbeat()
+    end
+end
+
+-- NEW: Check win condition (Ender Portal)
+local function checkEnderPortal()
+    if not gameWon and dungeon and dungeon:playerReachedExit(player.x, player.y, 16) then
         gameWon = true
         gameState = "win"
         Audio:stop("background_music")
@@ -54,6 +65,8 @@ local function startGame()
     corpses = {}
     coinsCollected = 0
     gameWon = false
+    
+    -- Initialize Dungeon (The new dungeon.lua will automatically load graphics/dungeon_tiles.png)
     dungeon = Dungeon:new("graphics/dungeon.png", 16)
     
     local spawnX, spawnY = dungeon:getLeftmostSpawnPoint(Knight.HITBOX_W, Knight.HITBOX_H, SPAWN_PADDING)
@@ -281,6 +294,9 @@ function love.update(dt)
         
         Camera:update(dt, player)
         Audio:updateHeartbeat(dt, player, gameState)
+
+        -- NEW: Check if player reached the Ender Portal
+        checkEnderPortal()
 
         if enemies then
             for i = #enemies, 1, -1 do
