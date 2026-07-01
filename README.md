@@ -1,8 +1,9 @@
 # Dungeon Escape 1.0
 
-Dungeon Escape is a professional-grade top-down dungeon crawler developed using the **LÖVE (Love2D)** framework and **Lua**. The project features unique image-based level generation, advanced collision detection, and dynamic lighting.
+Dungeon Escape is a professional-grade top-down dungeon crawler developed using the **LÖVE (Love2D)** framework and **Lua**. The project features unique image-based level generation, advanced collision detection, dynamic lighting, and reactive combat systems.
 
 ## 🎮 Gameplay
+
 You play as a Knight trapped within a dark, procedurally-populated dungeon. Your objective is to navigate the rocky corridors, collect gold coins to increase your score, and survive encounters with hostile Wizards and the formidable KM Bosses. 
 
 Survival depends on balancing your **HP** and **Armor**. While armor regenerates over time, direct hits to your health are permanent until the game ends.
@@ -25,22 +26,22 @@ Instead of traditional tilemaps, `dungeon.lua` parses a PNG image (`graphics/dun
 The system uses an **8-point sampling method** with insets to ensure the Knight doesn't get stuck on corners while allowing for smooth sliding along walls.
 
 ### 2. Combat System
-- **Knight:** Features a state machine for `idle`, `walk`, `attack`, `hurt`, and `defend`. Blocking with the Right Mouse Button negates damage.
-- **Wizards:** Ranged-style AI that wanders until the player enters their vision range (checked via raycasting).
-- **KM Bosses:** High-speed enemies that trigger a "Jumpscare" state if they catch the player.
+- **Knight:** Features a state machine for `idle`, `walk`, `attack`, `hurt`, `defend`, and `death`. Blocking with the Right Mouse Button negates damage. Armor regenerates every 2.5 seconds (+10 armor).
+- **Wizards:** Ranged-style AI that wanders until the player enters their vision range (checked via raycasting). They fire projectiles at the player when in range and line of sight.
+- **KM Bosses:** High-speed melee enemies that trigger a "Jumpscare" instant-death state if they catch the player. (Currently disabled in main.lua)
 
 ### 3. Atmosphere & Lighting
 A custom **GLSL Radial Shader** simulates torchlight. The light position is dynamically calculated based on the Knight's current animation frame to ensure the "torch" remains centered on the sprite.
 
 ### 4. Audio Engine
-Spatial-trigger audio for coin collection and state-dependent sounds (footsteps, shield hits, and hurt grunts) provide immersive feedback.
+Spatial-trigger audio for coin collection and state-dependent sounds (footsteps, shield hits, hurt grunts, wizard attacks) provide immersive feedback. Music transitions from menu theme to dungeon ambience upon game start.
 
 ## 🗺 Development Milestones (The Quests)
 
 ### Quest 1: The Hero and the Maze
 **Objective:** Create a controllable Knight and a dungeon layout that understands boundaries.
 *   **Outcome:** Implemented the `Knight` class and `Dungeon` image-scanning collision.
-*   **Feedback:** Collision was originally too blocky. **Fix:** Increased grid resolution by 4x.
+*   **Feedback:** Collision was originally too blocky. **Fix:** Increased grid resolution by 4x and implemented smooth sliding algorithm.
 
 ### Quest 2: The Haunting
 **Objective:** Populate the dungeon with enemies that react to the player.
@@ -59,8 +60,8 @@ Spatial-trigger audio for coin collection and state-dependent sounds (footsteps,
 
 ### Quest 5: The Boss Encounter
 **Objective:** Introduce high-stakes enemies and a game-over state.
-*   **Outcome:** Added `KM` boss class and death states.
-*   **Feedback:** Game ended too abruptly. **Fix:** Added a `deadAnimationComplete` check to allow animations to finish before the Game Over screen.
+*   **Outcome:** Added `KM` boss class with jumpscare death mechanic.
+*   **Feedback:** Game ended too abruptly. **Fix:** Added `deadAnimationComplete` check to allow animations to finish before the Game Over screen.
 
 ### Quest 6: The Clang of Steel
 **Objective:** Implement reactive audio for combat states.
