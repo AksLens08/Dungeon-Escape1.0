@@ -1,387 +1,655 @@
--- dungeon.lua
--- Enhanced procedural dungeon using Tileset Rendering (SpriteBatch)
+-- graphics/dungeon.lua
+-- Procedural dungeon generator + renderer
 local Class = require("system.class")
 local Dungeon = Class.define()
 
-function Dungeon:init(imagePath, tileSize)
-    self.tileSize = tileSize or 32 
-    self.gridSize = self.tileSize / 4 -- Keep this for collision logic (e.g., 8)
-    
-    -- === TILESET SETUP ===
-    self:setupTileset()
-    
+-- Create a new dungeon instance.
+-- imagePath: optional path to a tileset image (16x16 tiles)
+-- tileSize: logical tile size in pixels (default 16)
+function Dungeon:init(imagePath, tileSize, corridorWidth)
+    self.tileSize = tileSize or 16
+    -- configurable corridor/path width in pixels (multiple of gridSize is best)
+    self.corridorWidth = corridorWidth or 40
+    self.gridSize = math.max(1, math.floor(self.tileSize / 4)) -- collision grid granularity
+    self.tilesetPath = imagePath or "graphics/dungeon_tiles.png"
+
+    -- logical map size (in pixels). Medium-size dungeon.
+    self.width = 2200
+    self.height = 1300
+
+    -- storage
+    -- grid-based walkable map aligned with `gridSize`
+    self.walkableGrid = {}
+    self.tilesX = 0
+    self.tilesY = 0
     self.rooms = {}
-    self.walkableMap = {}
-    self.pillars = {}
-    
-    -- Decoration tables (Since we aren't painting pixels anymore, we store coordinates)
-    self.waterPuddles = {}
-    self.torches = {}
-    self.bones = {}
-    self.cobwebs = {}
-    self.enderPortal = nil -- NEW: The exit portal
-    
-    self:generateProceduralDungeon() 
-    
     self.collisionMap = {}
     self.walkableTiles = {}
+    self.decals = {}
+    self.barrels = {}
+    self.brokenTiles = {}
+    self.dustParticles = {}
+    self.mossPatches = {}
+    self.staticCanvas = nil
+
+    -- visual data (simple renderer only; legacy tileset removed)
+    self.useSimpleRenderer = true
+
+    -- decorations
+    self.torches = {}
+    self.waterPuddles = {}
+    self.bones = {}
+    self.cobwebs = {}
+    self.pillars = {}
+    self.enderPortal = nil
+
+    -- build everything
+    self:setupTileset()
+    self:generateProceduralDungeon()
     self:buildCollisionMap()
-    
-    -- === BUILD VISUAL RENDERING BATCH ===
     self:buildSpriteBatch()
+    self:buildStaticCanvas()
 end
 
--- === LOADS THE PNG AND CREATES QUADS ===
+-- Try to load tileset image and prepare quads. If missing or unsuitable,
+-- we'll fall back to a simple colored-tiles renderer.
 function Dungeon:setupTileset()
-    -- Load your downloaded tileset!
-    local success, img = pcall(love.graphics.newImage, "graphics/dungeon_tiles.png")
-    if success then
-        self.tilesetImage = img
-    else
-        -- Fallback: create a dummy magenta image if the file is missing so the game doesn't crash
-        local dummyData = love.image.newImageData(32, 32)
-        dummyData:mapPixel(function() return 1, 0, 1, 1 end)
-        self.tilesetImage = love.graphics.newImage(dummyData)
-    end
-    
-    -- Crucial for pixel art: prevents blurring when scaling!
-    self.tilesetImage:setFilter("nearest", "nearest") 
-    
-    local imgW = self.tilesetImage:getWidth()
-    local imgH = self.tilesetImage:getHeight()
-    
-    -- 0x72 Dungeon Tileset uses 16x16 pixel tiles
-    self.visualTileSize = 16 
-    
-    -- Coordinates based on the top-left room in your tileset image:
-    self.quads = {
-        floor = love.graphics.newQuad(16, 16, 16, 16, imgW, imgH),
-        wall  = love.graphics.newQuad(16, 0, 16, 16, imgW, imgH),
-    }
+    -- Force simple renderer: do not use the dungeon_tiles.png atlas.
+    -- This draws the dungeon procedurally using colored rectangles so
+    -- the map is guaranteed to contain no character art from the atlas.
+    self.tilesetImage = nil
+    self.floorQuads = {}
+    self.wallQuads = {}
+    self.useSimpleRenderer = true
+    self.simpleFloorColor = {0.33, 0.38, 0.44}
+    self.simpleWallColor  = {0.06, 0.06, 0.08}
 end
 
--- === RENDERS THE LOGICAL MAP INTO A HIGHLY OPTIMIZED SPRITEBATCH ===
-function Dungeon:buildSpriteBatch()
-    local ts = self.visualTileSize
-    local tilesX = math.ceil(self.width / ts)
-    local tilesY = math.ceil(self.height / ts)
-    
-    -- Allocate memory for the batch
-    self.spriteBatch = love.graphics.newSpriteBatch(self.tilesetImage, tilesX * tilesY)
-    self.spriteBatch:clear()
-    
-    for ty = 0, tilesY - 1 do
-        for tx = 0, tilesX - 1 do
-            local px = tx * ts
-            local py = ty * ts
-            
-            -- Check the logical walkableMap to decide which tile to draw
-            local midX = math.floor(px + ts / 2)
-            local midY = math.floor(py + ts / 2)
-            
-            local isWalkable = self.walkableMap[midY] and self.walkableMap[midY][midX]
-            local quad = isWalkable and self.quads.floor or self.quads.wall
-            
-            self.spriteBatch:add(quad, px, py)
-        end
-    end
-    self.spriteBatch:flush() -- Finalize the batch for rendering
-end
-
+-- Procedural dungeon generator: place rooms and corridors into walkableGrid
 function Dungeon:generateProceduralDungeon()
-    self.width = 600
-    self.height = 600
-    
-    -- Initialize logical walkable map (No more ImageData pixel manipulation!)
-    self.walkableMap = {}
-    for y = 0, self.height - 1 do
-        self.walkableMap[y] = {}
-        for x = 0, self.width - 1 do
-            self.walkableMap[y][x] = false
-        end
+    -- initialize grid-based walkable map to non-walkable
+    local tilesX = math.floor(self.width / self.gridSize)
+    local tilesY = math.floor(self.height / self.gridSize)
+    self.tilesX = tilesX; self.tilesY = tilesY
+    self.walkableGrid = {}
+    for ty = 1, tilesY do
+        self.walkableGrid[ty] = {}
+        for tx = 1, tilesX do self.walkableGrid[ty][tx] = false end
     end
-    
-    local minRoomSize = 100
-    local maxRoomSize = 160
-    local maxAttempts = 100
-    local targetRooms = 10
-    local padding = 40
-    
+
+    local minRoom = 90
+    local maxRoom = 260
+    local padding = 48
+    local maxAttempts = 900
+    local targetRooms = 24
+
+    -- place rooms
     for attempt = 1, maxAttempts do
         if #self.rooms >= targetRooms then break end
-        
-        local roomW = math.random(minRoomSize, maxRoomSize)
-        local roomH = math.random(minRoomSize, maxRoomSize)
-        local roomX = math.random(padding, self.width - roomW - padding)
-        local roomY = math.random(padding, self.height - roomH - padding)
-        
+        local w = math.random(minRoom, maxRoom)
+        local h = math.random(minRoom, maxRoom)
+        local x = math.random(padding, self.width - w - padding)
+        local y = math.random(padding, self.height - h - padding)
+
         local overlaps = false
-        for _, existingRoom in ipairs(self.rooms) do
-            if self:rectsOverlap(
-                roomX - padding, roomY - padding, roomW + padding*2, roomH + padding*2,
-                existingRoom.x, existingRoom.y, existingRoom.w, existingRoom.h
-            ) then
-                overlaps = true
-                break
+        for _, r in ipairs(self.rooms) do
+            if self:rectsOverlap(x - padding, y - padding, w + padding*2, h + padding*2, r.x, r.y, r.w, r.h) then
+                overlaps = true; break
             end
         end
-        
         if not overlaps then
-            self:carveRoom(roomX, roomY, roomW, roomH)
-            table.insert(self.rooms, {
-                x = roomX, y = roomY, w = roomW, h = roomH,
-                cx = roomX + roomW / 2, cy = roomY + roomH / 2
-            })
+            -- pick a room shape template
+            local shape = "rect"
+            local rrand = math.random()
+            if rrand < 0.15 then shape = "cross"
+            elseif rrand < 0.4 then shape = "L" end
+
+            -- carve according to shape
+            if shape == "rect" then
+                self:carveRoom(x, y, w, h)
+            elseif shape == "L" then
+                local w2 = math.floor(w * 0.6)
+                local h2 = math.floor(h * 0.6)
+                self:carveRoom(x, y, w2, h)
+                self:carveRoom(x + w2 - 8, y + h - h2, w - w2 + 8, h2)
+            elseif shape == "cross" then
+                local cxw = math.floor(w * 0.4)
+                local cyh = math.floor(h * 0.4)
+                self:carveRoom(x + (w - cxw) / 2, y, cxw, h)
+                self:carveRoom(x, y + (h - cyh) / 2, w, cyh)
+            end
+
+            table.insert(self.rooms, {x = x, y = y, w = w, h = h, cx = x + w/2, cy = y + h/2, shape = shape})
         end
     end
-    
-    table.sort(self.rooms, function(a, b)
-        if math.abs(a.cx - b.cx) < 100 then
-            return a.cy < b.cy
-        else
-            return a.cx < b.cx
-        end
-    end)
-    
+
+    -- sort rooms by center x for stable connections
+    table.sort(self.rooms, function(a,b) return a.cx < b.cx end)
+
+    -- connect rooms with L-shaped corridors
     for i = 1, #self.rooms - 1 do
-        self:carveCorridor(
-            self.rooms[i].cx, self.rooms[i].cy,
-            self.rooms[i + 1].cx, self.rooms[i + 1].cy
-        )
+        local a = self.rooms[i]
+        local b = self.rooms[i+1]
+        self:carveCorridor(a.cx, a.cy, b.cx, b.cy)
     end
-    
+
+    -- enlarge first and last rooms as start/end areas when there is safe space
     if #self.rooms > 0 then
-        local firstRoom = self.rooms[1]
-        firstRoom.w = 140
-        firstRoom.h = 140
-        firstRoom.cx = firstRoom.x + firstRoom.w / 2
-        firstRoom.cy = firstRoom.y + firstRoom.h / 2
-        self:carveRoom(firstRoom.x, firstRoom.y, firstRoom.w, firstRoom.h)
+        local r = self.rooms[1]
+        local targetW = math.max(r.w, 120)
+        local targetH = math.max(r.h, 120)
+        local newX = math.max(0, math.min(r.x - math.floor((targetW - r.w) / 2), self.width - targetW))
+        local newY = math.max(0, math.min(r.y - math.floor((targetH - r.h) / 2), self.height - targetH))
+        if self:canPlaceRoom(newX, newY, targetW, targetH) then
+            r.x, r.y, r.w, r.h = newX, newY, targetW, targetH
+            r.cx, r.cy = r.x + r.w / 2, r.y + r.h / 2
+            self:carveRoom(r.x, r.y, r.w, r.h)
+        else
+            self:carveRoom(r.x, r.y, r.w, r.h)
+        end
     end
-    
     if #self.rooms > 0 then
-        local lastRoom = self.rooms[#self.rooms]
-        lastRoom.w = 180
-        lastRoom.h = 180
-        lastRoom.cx = lastRoom.x + lastRoom.w / 2
-        lastRoom.cy = lastRoom.y + lastRoom.h / 2
-        self:carveRoom(lastRoom.x, lastRoom.y, lastRoom.w, lastRoom.h)
-        
-        -- NEW: Place the Ender Portal in the last room
-        self:createEnderPortal(lastRoom)
+        local r = self.rooms[#self.rooms]
+        local targetW = math.max(r.w, 140)
+        local targetH = math.max(r.h, 140)
+        local newX = math.max(0, math.min(r.x - math.floor((targetW - r.w) / 2), self.width - targetW))
+        local newY = math.max(0, math.min(r.y - math.floor((targetH - r.h) / 2), self.height - targetH))
+        if self:canPlaceRoom(newX, newY, targetW, targetH) then
+            r.x, r.y, r.w, r.h = newX, newY, targetW, targetH
+            r.cx, r.cy = r.x + r.w / 2, r.y + r.h / 2
+            self:carveRoom(r.x, r.y, r.w, r.h)
+        else
+            self:carveRoom(r.x, r.y, r.w, r.h)
+        end
+        self:createEnderPortal(r)
     end
-    
+
+    -- add some decorations
+    -- assign a subtle tint per room and place pillars randomly
+    for i, room in ipairs(self.rooms) do
+        room.tint = {0.28 + math.random() * 0.06, 0.32 + math.random() * 0.06, 0.36 + math.random() * 0.06}
+        -- per-room accent color for rugs, puddles and subtle overlays
+        room.accent = {math.max(0, room.tint[1] + (math.random()-0.5)*0.18), math.max(0, room.tint[2] + (math.random()-0.5)*0.18), math.max(0, room.tint[3] + (math.random()-0.5)*0.18)}
+        room.patternSeed = math.random(1, 100000)
+        -- place 0-2 pillars
+        if math.random() > 0.6 then
+            local num = math.random(0,2)
+            for p=1,num do
+                table.insert(self.pillars, {x = room.x + math.random(20, room.w-20), y = room.y + math.random(20, room.h-20)})
+            end
+        end
+    end
     self:addDecorations()
     self:addWaterPuddles()
+    self:addProps()
+    self:addCobwebs()
+    self:addDust()
 end
 
--- NEW: Create the Ender Portal (exit)
-function Dungeon:createEnderPortal(room)
-    -- Place portal in the center of the last room
-    self.enderPortal = {
-        x = room.cx,
-        y = room.cy,
-        width = 32,
-        height = 32,
-        animOffset = 0
-    }
+function Dungeon:addProps()
+    -- add barrels and broken tile clusters in rooms
+    for _, room in ipairs(self.rooms) do
+        if math.random() < 0.4 then
+            local bx = room.x + math.random(12, room.w - 24)
+            local by = room.y + math.random(12, room.h - 24)
+            table.insert(self.barrels, {x = bx, y = by, r = math.random(6,10)})
+        end
+        if math.random() < 0.35 then
+            local count = math.random(1,3)
+            for i=1,count do
+                local bx = room.x + math.random(8, room.w - 16)
+                local by = room.y + math.random(8, room.h - 16)
+                table.insert(self.brokenTiles, {x = bx, y = by, w = math.random(6,16), h = math.random(6,16)})
+            end
+        end
+        -- small moss patches near walls
+        if math.random() < 0.5 then
+            for i=1, math.random(1,3) do
+                local mx = room.x + math.random(8, room.w - 8)
+                local my = room.y + math.random(8, room.h - 8)
+                table.insert(self.mossPatches, {x = mx, y = my, r = math.random(4,10)})
+            end
+        end
+    end
 end
 
-function Dungeon:rectsOverlap(x1, y1, w1, h1, x2, y2, w2, h2)
+function Dungeon:addCobwebs()
+    for i=1, 18 do
+        table.insert(self.cobwebs, {x = math.random(0, self.width), y = math.random(0, self.height)})
+    end
+end
+
+function Dungeon:addDust()
+    for i=1, 120 do
+        table.insert(self.dustParticles, {x = math.random(0, self.width), y = math.random(0, self.height), r = math.random(1,3), seed = math.random() * 10})
+    end
+end
+
+function Dungeon:rectsOverlap(x1,y1,w1,h1,x2,y2,w2,h2)
     return x1 < x2 + w2 and x1 + w1 > x2 and y1 < y2 + h2 and y1 + h1 > y2
 end
 
-function Dungeon:carveRoom(x, y, w, h)
-    local margin = 2
-    for py = y + margin, y + h - margin do
-        for px = x + margin, x + w - margin do
-            if px >= 0 and px < self.width and py >= 0 and py < self.height then
-                self.walkableMap[py][px] = true
+function Dungeon:canPlaceRoom(x, y, w, h, padding)
+    padding = padding or 0
+    local left = x - padding
+    local top = y - padding
+    local right = x + w + padding
+    local bottom = y + h + padding
+    if left < 0 or top < 0 or right > self.width or bottom > self.height then
+        return false
+    end
+    local gx1 = math.max(1, math.floor(left / self.gridSize) + 1)
+    local gy1 = math.max(1, math.floor(top / self.gridSize) + 1)
+    local gx2 = math.min(self.tilesX, math.floor((right - 1) / self.gridSize) + 1)
+    local gy2 = math.min(self.tilesY, math.floor((bottom - 1) / self.gridSize) + 1)
+    for ty = gy1, gy2 do
+        for tx = gx1, gx2 do
+            if self.walkableGrid[ty] and self.walkableGrid[ty][tx] then
+                return false
             end
+        end
+    end
+    return true
+end
+
+function Dungeon:carveRoom(x, y, w, h)
+    -- mark walkable cells in grid coordinates to align with collision map
+    local margin = 2
+    local gx1 = math.max(1, math.floor((x + margin) / self.gridSize) + 1)
+    local gy1 = math.max(1, math.floor((y + margin) / self.gridSize) + 1)
+    local gx2 = math.min(self.tilesX, math.floor((x + w - margin - 1) / self.gridSize) + 1)
+    local gy2 = math.min(self.tilesY, math.floor((y + h - margin - 1) / self.gridSize) + 1)
+    for ty = gy1, gy2 do
+        for tx = gx1, gx2 do
+            self.walkableGrid[ty][tx] = true
         end
     end
 end
 
 function Dungeon:carveCorridor(x1, y1, x2, y2)
-    local corridorWidth = 40
-    local minX, maxX = math.min(x1, x2), math.max(x1, x2)
-    local minY, maxY = math.min(y1, y2), math.max(y1, y2)
-    
-    for x = minX, maxX do
-        for yOffset = -corridorWidth/2, corridorWidth/2 do
-            local y = math.floor(y1 + yOffset)
-            if x >= 0 and x < self.width and y >= 0 and y < self.height then
-                if self.walkableMap[y] then self.walkableMap[y][x] = true end
-            end
+    local corridor = self.corridorWidth or 36
+    local sx, sy = math.floor(x1), math.floor(y1)
+    local ex, ey = math.floor(x2), math.floor(y2)
+    -- carve horizontal segment: fill bounding rectangle for robustness
+    local xstart = math.min(sx, ex)
+    local xend = math.max(sx, ex)
+    local ytop = math.floor(sy - corridor/2)
+    local ybot = math.floor(sy + corridor/2)
+    local gx1 = math.max(1, math.floor(xstart / self.gridSize) + 1)
+    local gx2 = math.min(self.tilesX, math.floor((xend) / self.gridSize) + 1)
+    local gy1 = math.max(1, math.floor(ytop / self.gridSize) + 1)
+    local gy2 = math.min(self.tilesY, math.floor(ybot / self.gridSize) + 1)
+    for ty = gy1, gy2 do
+        for tx = gx1, gx2 do
+            self.walkableGrid[ty][tx] = true
         end
     end
-    
-    for y = minY, maxY do
-        for xOffset = -corridorWidth/2, corridorWidth/2 do
-            local x = math.floor(x2 + xOffset)
-            if x >= 0 and x < self.width and y >= 0 and y < self.height then
-                if self.walkableMap[math.floor(y)] then self.walkableMap[math.floor(y)][x] = true end
-            end
+    -- carve vertical segment: fill bounding rectangle
+    local ystart = math.min(sy, ey)
+    local yend = math.max(sy, ey)
+    local xleft = math.floor(ex - corridor/2)
+    local xright = math.floor(ex + corridor/2)
+    local gx1v = math.max(1, math.floor(xleft / self.gridSize) + 1)
+    local gx2v = math.min(self.tilesX, math.floor(xright / self.gridSize) + 1)
+    local gy1v = math.max(1, math.floor(ystart / self.gridSize) + 1)
+    local gy2v = math.min(self.tilesY, math.floor(yend / self.gridSize) + 1)
+    for ty = gy1v, gy2v do
+        for tx = gx1v, gx2v do
+            self.walkableGrid[ty][tx] = true
         end
     end
 end
 
--- === STORES DECORATION DATA (Instead of drawing pixels) ===
 function Dungeon:addWaterPuddles()
     for _, room in ipairs(self.rooms) do
-        if math.random() > 0.5 then
-            local puddleX = room.x + math.random(20, room.w - 20)
-            local puddleY = room.y + math.random(20, room.h - 20)
-            local puddleRadius = math.random(8, 12)
-            table.insert(self.waterPuddles, {x = puddleX, y = puddleY, r = puddleRadius})
+        if math.random() > 0.6 then
+            local px = room.x + math.random(10, room.w - 10)
+            local py = room.y + math.random(10, room.h - 10)
+            -- choose a slightly varied hue per puddle using room accent
+            local hue = (math.random() < 0.6) and {0.2, 0.45, 0.8} or {0.22, 0.55, 0.28}
+            -- blend with room accent for cohesion
+            hue = { (hue[1] + room.accent[1]) * 0.5, (hue[2] + room.accent[2]) * 0.5, (hue[3] + room.accent[3]) * 0.5 }
+            table.insert(self.waterPuddles, {x = px, y = py, r = math.random(6, 12), color = hue})
         end
     end
 end
 
 function Dungeon:addDecorations()
     for _, room in ipairs(self.rooms) do
-        -- Torches
-        local torchPositions = {
-            {room.x + 10, room.y + 10}, {room.x + room.w - 10, room.y + 10},
-            {room.x + 10, room.y + room.h - 10}, {room.x + room.w - 10, room.y + room.h - 10}
-        }
-        for _, pos in ipairs(torchPositions) do
-            table.insert(self.torches, {x = pos[1], y = pos[2]})
-        end
-        
-        -- Bones
-        if math.random() > 0.3 then
-            local numBones = math.random(2, 5)
-            for i = 1, numBones do
-                table.insert(self.bones, {
-                    x = room.x + math.random(15, room.w - 15),
-                    y = room.y + math.random(15, room.h - 15)
-                })
-            end
-        end
-        
-        -- Cobwebs (store corner coordinates)
-        table.insert(self.cobwebs, {x = room.x + 5, y = room.y + 5, corner = "TL"})
-        table.insert(self.cobwebs, {x = room.x + room.w - 5, y = room.y + 5, corner = "TR"})
-        table.insert(self.cobwebs, {x = room.x + 5, y = room.y + room.h - 5, corner = "BL"})
-        table.insert(self.cobwebs, {x = room.x + room.w - 5, y = room.y + room.h - 5, corner = "BR"})
+        -- torches at corners
+        table.insert(self.torches, {x = room.x + 8, y = room.y + 8, seed = math.random()*10})
+        table.insert(self.torches, {x = room.x + room.w - 8, y = room.y + 8, seed = math.random()*10})
     end
+    -- bones & cobwebs
+    for i=1, 10 do
+        table.insert(self.bones, {x = math.random(0, self.width), y = math.random(0, self.height)})
+    end
+    -- place some decals (crates, rugs) inside rooms
+    for _, room in ipairs(self.rooms) do
+        if math.random() < 0.35 then
+            local dx = room.x + math.random(12, room.w - 24)
+            local dy = room.y + math.random(12, room.h - 24)
+            local r = math.random()
+            local kind = "crate"
+            if r < 0.18 then kind = "rug"
+            elseif r < 0.45 then kind = "broken"
+            elseif r < 0.6 then kind = "barrel" end
+            table.insert(self.decals, {x = dx, y = dy, kind = kind})
+        end
+    end
+end
+
+function Dungeon:createEnderPortal(room)
+    self.enderPortal = { x = room.cx, y = room.cy, w = 32, h = 32, anim = 0 }
 end
 
 function Dungeon:buildCollisionMap()
-    local tilesX = math.floor(self.width / self.gridSize)
-    local tilesY = math.floor(self.height / self.gridSize)
-
-    for ty = 1, tilesY do
+    self.collisionMap = {}
+    self.walkableTiles = {}
+    for ty = 1, self.tilesY do
         self.collisionMap[ty] = {}
-        for tx = 1, tilesX do
-            local midX = math.floor((tx - 0.5) * self.gridSize)
-            local midY = math.floor((ty - 0.5) * self.gridSize)
-            
-            midX = math.max(0, math.min(midX, self.width - 1))
-            midY = math.max(0, math.min(midY, self.height - 1))
+        for tx = 1, self.tilesX do
+            local isWalkable = self.walkableGrid[ty] and self.walkableGrid[ty][tx]
 
-            local isWalkable = self.walkableMap[midY] and self.walkableMap[midY][midX]
-            self.collisionMap[ty][tx] = not isWalkable
-            
-            if isWalkable then
-                table.insert(self.walkableTiles, {x = tx, y = ty})
+            -- check props that should block movement: pillars, barrels, broken tiles, some decals
+            local cellX = (tx - 1) * self.gridSize
+            local cellY = (ty - 1) * self.gridSize
+            local cellW, cellH = self.gridSize, self.gridSize
+
+            local blockedByProp = false
+            -- pillars (12x12 centered at ph.x,ph.y)
+            for _, ph in ipairs(self.pillars) do
+                if ph.x + 6 > cellX and ph.x - 6 < cellX + cellW and ph.y + 6 > cellY and ph.y - 6 < cellY + cellH then
+                    blockedByProp = true; break
+                end
             end
+
+            -- barrels (circle)
+            if not blockedByProp then
+                for _, br in ipairs(self.barrels) do
+                    local closestX = math.max(cellX, math.min(br.x, cellX + cellW))
+                    local closestY = math.max(cellY, math.min(br.y, cellY + cellH))
+                    local dx = closestX - br.x
+                    local dy = closestY - br.y
+                    if dx * dx + dy * dy <= (br.r or 6) * (br.r or 6) then blockedByProp = true; break end
+                end
+            end
+
+            -- broken tile clusters (rect)
+            if not blockedByProp then
+                for _, b in ipairs(self.brokenTiles) do
+                    if b.x < cellX + cellW and b.x + b.w > cellX and b.y < cellY + cellH and b.y + b.h > cellY then
+                        blockedByProp = true; break
+                    end
+                end
+            end
+
+            -- decals that represent barrels/broken also block
+            if not blockedByProp then
+                for _, d in ipairs(self.decals) do
+                    if d.kind == "barrel" then
+                        local bx, by, br = d.x + 6, d.y + 4, 6
+                        local closestX = math.max(cellX, math.min(bx, cellX + cellW))
+                        local closestY = math.max(cellY, math.min(by, cellY + cellH))
+                        local dx = closestX - bx; local dy = closestY - by
+                        if dx * dx + dy * dy <= br * br then blockedByProp = true; break end
+                    elseif d.kind == "broken" then
+                        local dw, dh = 12, 8
+                        if d.x < cellX + cellW and d.x + dw > cellX and d.y < cellY + cellH and d.y + dh > cellY then
+                            blockedByProp = true; break
+                        end
+                    end
+                end
+            end
+
+            if blockedByProp then isWalkable = false end
+
+            self.collisionMap[ty][tx] = not isWalkable
+            if isWalkable then table.insert(self.walkableTiles, {x = tx, y = ty}) end
         end
     end
 end
 
--- === RENDERING ===
-function Dungeon:render()
-    love.graphics.setColor(1, 1, 1)
-    
-    -- 1. Draw the highly optimized tileset
-    love.graphics.draw(self.spriteBatch, 0, 0)
-    
-    -- 2. Draw Water Puddles
-    love.graphics.setColor(0.2, 0.4, 0.8, 0.5)
-    for _, puddle in ipairs(self.waterPuddles) do
-        love.graphics.circle("fill", puddle.x, puddle.y, puddle.r)
+function Dungeon:buildSpriteBatch()
+    -- Legacy spriteBatch/tileset removed. We only need simple grid dimensions.
+    local ts = self.tileSize
+    self.simpleTilesX = math.ceil(self.width / ts)
+    self.simpleTilesY = math.ceil(self.height / ts)
+    self.spriteBatch = nil
+end
+
+function Dungeon:buildStaticCanvas()
+    if not love or not love.graphics then return end
+    if self.staticCanvas then self.staticCanvas:release() end
+    self.staticCanvas = love.graphics.newCanvas(self.width, self.height)
+    local prevCanvas = love.graphics.getCanvas()
+    love.graphics.setCanvas(self.staticCanvas)
+    love.graphics.clear(0,0,0,0)
+    love.graphics.push()
+    love.graphics.origin()
+
+    local function ix(v) return math.floor(v + 0.5) end
+    local function quant(c) return math.floor(c * 5 + 0.5) / 5 end
+    local function cellWalkable(px, py)
+        local gx = math.floor(px / self.gridSize) + 1
+        local gy = math.floor(py / self.gridSize) + 1
+        return self.walkableGrid[gy] and self.walkableGrid[gy][gx]
     end
-    
-    -- 3. Draw Cobwebs
-    love.graphics.setColor(1, 1, 1, 0.3)
+    local function noise(x,y)
+        return math.abs(math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1
+    end
+    local ts = self.tileSize
+
+    -- draw walls
+    love.graphics.setColor({quant(self.simpleWallColor[1]), quant(self.simpleWallColor[2]), quant(self.simpleWallColor[3])})
+    for ty = 0, self.simpleTilesY - 1 do
+        for tx = 0, self.simpleTilesX - 1 do
+            local px = tx * ts
+            local py = ty * ts
+            local midX = math.floor(px + ts/2)
+            local midY = math.floor(py + ts/2)
+            if not cellWalkable(midX, midY) then
+                love.graphics.rectangle("fill", ix(px), ix(py), ts, ts)
+            end
+        end
+    end
+
+    -- draw room floors
+    for _, room in ipairs(self.rooms) do
+        local tint = room.tint or self.simpleFloorColor
+        love.graphics.setColor(tint)
+        love.graphics.rectangle("fill", ix(room.x), ix(room.y), ix(room.w), ix(room.h))
+        for py = room.y, room.y + room.h - 1, ts do
+            for px = room.x, room.x + room.w - 1, ts do
+                local n = noise(px + room.patternSeed, py + room.patternSeed)
+                if n > 0.7 then
+                    love.graphics.setColor(math.max(0, tint[1] - 0.05), math.max(0, tint[2] - 0.05), math.max(0, tint[3] - 0.05))
+                    love.graphics.rectangle("fill", ix(px + (n * (ts-4) + 2)), ix(py + ((1-n) * (ts-4) + 2)), 2, 1)
+                    love.graphics.setColor(tint)
+                end
+            end
+        end
+    end
+
+    -- draw corridor / other floors
+    love.graphics.setColor(self.simpleFloorColor)
+    for ty = 0, self.simpleTilesY - 1 do
+        for tx = 0, self.simpleTilesX - 1 do
+            local px = tx * ts
+            local py = ty * ts
+            local midX = math.floor(px + ts/2)
+            local midY = math.floor(py + ts/2)
+            if cellWalkable(midX, midY) then
+                local inRoom = false
+                for _, r in ipairs(self.rooms) do
+                    if midX >= r.x and midX < r.x + r.w and midY >= r.y and midY < r.y + r.h then
+                        inRoom = true
+                        break
+                    end
+                end
+                if not inRoom then
+                    local n = noise(px, py)
+                    love.graphics.setColor(self.simpleFloorColor[1] + (n - 0.5) * 0.06, self.simpleFloorColor[2] + (n - 0.5) * 0.06, self.simpleFloorColor[3] + (n - 0.5) * 0.06)
+                    love.graphics.rectangle("fill", ix(px), ix(py), ts, ts)
+                    if n > 0.86 then
+                        love.graphics.setColor(0.12, 0.14, 0.16)
+                        love.graphics.rectangle("fill", ix(px + (n - 0.5) * ts), ix(py + (1 - n) * ts), 2, 1)
+                        love.graphics.setColor(self.simpleFloorColor)
+                    end
+                end
+            end
+        end
+    end
+
+    -- draw wall detail
+    for ty = 0, self.simpleTilesY - 1 do
+        for tx = 0, self.simpleTilesX - 1 do
+            local px = tx * ts
+            local py = ty * ts
+            local midX = math.floor(px + ts/2)
+            local midY = math.floor(py + ts/2)
+            if not cellWalkable(midX, midY) then
+                local north = cellWalkable(midX, midY - self.gridSize)
+                local south = cellWalkable(midX, midY + self.gridSize)
+                local west = cellWalkable(midX - self.gridSize, midY)
+                local east = cellWalkable(midX + self.gridSize, midY)
+                love.graphics.setColor(0,0,0)
+                if north then love.graphics.rectangle("fill", ix(px), ix(py), ts, 2) end
+                if west then love.graphics.rectangle("fill", ix(px), ix(py), 2, ts) end
+                love.graphics.setColor(1,1,1,0.09)
+                if south then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), ts, 2) end
+                if east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, ts) end
+                if north then love.graphics.rectangle("fill", ix(px) + 1, ix(py) + 1, ts - 2, 1) end
+                love.graphics.setColor(1,1,1)
+            end
+        end
+    end
+
+    if self.enderPortal then
+        love.graphics.setColor(0.6, 0.0, 0.8, 0.5)
+        love.graphics.circle("fill", self.enderPortal.x, self.enderPortal.y, 20)
+        love.graphics.setColor(1,1,1)
+    end
+
+    love.graphics.setBlendMode("alpha")
+    for _, p in ipairs(self.waterPuddles) do
+        local c = p.color or {0.2, 0.45, 0.8}
+        love.graphics.setColor(c[1], c[2], c[3], 0.5)
+        love.graphics.circle("fill", ix(p.x), ix(p.y), p.r)
+        love.graphics.setColor(math.min(1, c[1] + 0.15), math.min(1, c[2] + 0.18), math.min(1, c[3] + 0.25), 0.28)
+        love.graphics.circle("fill", ix(p.x - 2), ix(p.y - 2), math.max(2, math.floor(p.r * 0.6)))
+    end
+    for _, d in ipairs(self.decals) do
+        if d.kind == "crate" then
+            love.graphics.setColor(0.2, 0.12, 0.06)
+            love.graphics.rectangle("fill", d.x, d.y, 12, 8)
+            love.graphics.setColor(0, 0, 0, 0.6)
+            love.graphics.rectangle("line", d.x, d.y, 12, 8)
+        elseif d.kind == "rug" then
+            love.graphics.setColor(0.55, 0.18, 0.12)
+            love.graphics.rectangle("fill", d.x, d.y, 18, 10)
+            love.graphics.setColor(0, 0, 0, 0.3)
+            love.graphics.rectangle("line", d.x, d.y, 18, 10)
+        elseif d.kind == "barrel" then
+            love.graphics.setColor(0.18, 0.08, 0.04)
+            love.graphics.circle("fill", d.x + 6, d.y + 4, 6)
+            love.graphics.setColor(0, 0, 0, 0.5)
+            love.graphics.circle("line", d.x + 6, d.y + 4, 6)
+        elseif d.kind == "broken" then
+            love.graphics.setColor(0.08, 0.06, 0.06)
+            for i = 1, 3 do
+                love.graphics.rectangle("fill", d.x + math.random(-4, 8), d.y + math.random(-4, 8), math.random(2, 6), math.random(1, 3))
+            end
+        end
+    end
+    love.graphics.setColor(0.9, 0.9, 0.8)
+    for _, b in ipairs(self.bones) do
+        love.graphics.line(b.x - 4, b.y, b.x + 4, b.y)
+    end
+    love.graphics.setColor(1,1,1,0.25)
     love.graphics.setLineWidth(1)
     for _, web in ipairs(self.cobwebs) do
-        -- Simple web lines in corners
-        local dirX = web.corner:find("L") and 1 or -1
-        local dirY = web.corner:find("T") and 1 or -1
-        love.graphics.line(web.x, web.y, web.x + 15 * dirX, web.y)
-        love.graphics.line(web.x, web.y, web.x, web.y + 15 * dirY)
-        love.graphics.line(web.x, web.y, web.x + 10 * dirX, web.y + 10 * dirY)
+        love.graphics.line(web.x, web.y, web.x + 12, web.y)
+        love.graphics.line(web.x, web.y, web.x, web.y + 12)
     end
-    
-    -- 4. Draw Bones
-    love.graphics.setColor(0.9, 0.9, 0.8)
-    for _, bone in ipairs(self.bones) do
-        love.graphics.line(bone.x - 4, bone.y, bone.x + 4, bone.y)
-        love.graphics.circle("fill", bone.x - 4, bone.y, 1.5)
-        love.graphics.circle("fill", bone.x + 4, bone.y, 1.5)
+    love.graphics.setLineWidth(1)
+    love.graphics.setColor(1,1,1)
+    for _, ph in ipairs(self.pillars) do
+        love.graphics.setColor(0.12, 0.12, 0.14)
+        love.graphics.rectangle("fill", ph.x - 6, ph.y - 6, 12, 12)
+        love.graphics.setColor(0,0,0,0.6)
+        love.graphics.rectangle("line", ph.x - 6, ph.y - 6, 12, 12)
     end
-    
-    -- 5. Draw Torches (Glowing effect)
+    for _, b in ipairs(self.brokenTiles) do
+        love.graphics.setColor(0.06, 0.05, 0.05)
+        love.graphics.rectangle("fill", b.x, b.y, b.w, b.h)
+        love.graphics.setColor(0,0,0,0.45)
+        love.graphics.rectangle("line", b.x, b.y, b.w, b.h)
+    end
+    for _, br in ipairs(self.barrels) do
+        love.graphics.setColor(0.16, 0.08, 0.03)
+        love.graphics.circle("fill", br.x, br.y, br.r)
+        love.graphics.setColor(0,0,0,0.5)
+        love.graphics.circle("line", br.x, br.y, br.r)
+    end
+    for _, m in ipairs(self.mossPatches) do
+        love.graphics.setColor(0.18, 0.32, 0.12, 0.6)
+        love.graphics.circle("fill", m.x, m.y, m.r)
+    end
+    love.graphics.setBlendMode("alpha")
+
+    love.graphics.pop()
+    love.graphics.setCanvas(prevCanvas)
+end
+
+function Dungeon:render()
+    if not self.staticCanvas then self:buildStaticCanvas() end
+    love.graphics.setColor(1,1,1)
+    love.graphics.draw(self.staticCanvas, 0, 0)
+
+    local function ix(v) return math.floor(v + 0.5) end
+    local time = love.timer.getTime()
     for _, torch in ipairs(self.torches) do
-        love.graphics.setColor(1.0, 0.6, 0.2, 0.2)
-        love.graphics.circle("fill", torch.x, torch.y, 25)
-        love.graphics.setColor(1.0, 0.8, 0.3, 0.6)
-        love.graphics.circle("fill", torch.x, torch.y, 10)
-        love.graphics.setColor(1.0, 1.0, 0.8)
-        love.graphics.circle("fill", torch.x, torch.y, 3)
+        local x, y = torch.x, torch.y
+        local s = (torch.seed or 0) + time * 6
+        local flick = 1 + math.sin(s) * 0.12 + (math.sin(s * 1.7) * 0.06)
+        local warm = {1.0, 0.65, 0.25}
+        love.graphics.setBlendMode("add")
+        love.graphics.setColor(warm[1], warm[2], warm[3], 0.18 * flick)
+        love.graphics.circle("fill", ix(x), ix(y), 30 * flick)
+        love.graphics.setColor(warm[1], warm[2], warm[3], 0.85 * flick)
+        love.graphics.circle("fill", ix(x), ix(y), 10 * flick)
+        love.graphics.setColor(1.0, 1.0, 0.9)
+        love.graphics.circle("fill", ix(x), ix(y), 3)
+        love.graphics.setColor(warm[1], warm[2], warm[3], 0.06 * flick)
+        love.graphics.polygon("fill", ix(x) - 6 * flick, ix(y) + 2, ix(x) + 6 * flick, ix(y) + 2, ix(x), ix(y) + 40 * flick)
+        love.graphics.setBlendMode("alpha")
     end
-    
-    -- 6. NEW: Draw the Ender Portal (Exit)
-    if self.enderPortal then
-        -- Animate the portal
-        self.enderPortal.animOffset = (self.enderPortal.animOffset + 0.1) % (math.pi * 2)
-        
-        -- Outer glow (pulsing)
-        local pulse = math.sin(self.enderPortal.animOffset) * 5
-        love.graphics.setColor(0.5, 0.0, 0.8, 0.4)
-        love.graphics.circle("fill", self.enderPortal.x, self.enderPortal.y, 25 + pulse)
-        
-        -- Middle ring
-        love.graphics.setColor(0.7, 0.0, 1.0, 0.6)
-        love.graphics.circle("line", self.enderPortal.x, self.enderPortal.y, 18)
-        
-        -- Inner swirl
-        love.graphics.setColor(0.9, 0.2, 1.0, 0.8)
-        love.graphics.circle("fill", self.enderPortal.x, self.enderPortal.y, 12)
-        
-        -- Core
-        love.graphics.setColor(1.0, 0.8, 1.0, 1.0)
-        love.graphics.circle("fill", self.enderPortal.x, self.enderPortal.y, 6)
-        
-        -- Label
-        love.graphics.setColor(1, 1, 1)
-        love.graphics.printf("EXIT", self.enderPortal.x - 20, self.enderPortal.y - 40, 40, "center")
+
+    love.graphics.setBlendMode("alpha")
+    local t = love.timer.getTime()
+    for _, d in ipairs(self.dustParticles) do
+        local ox = math.sin(t * 0.4 + d.seed) * 6
+        local oy = math.cos(t * 0.25 + d.seed) * 4
+        local alpha = 0.06 + (math.sin(t + d.seed) + 1) * 0.02
+        love.graphics.setColor(1,1,1, alpha)
+        love.graphics.circle("fill", d.x + ox, d.y + oy, d.r)
     end
-    
-    love.graphics.setColor(1, 1, 1) -- Reset color
+    love.graphics.setBlendMode("alpha")
 end
 
--- NEW: Check if player reached the exit
-function Dungeon:playerReachedExit(playerX, playerY, playerRadius)
+-- utility: check if player reached exit
+function Dungeon:playerReachedExit(px, py, playerRadius)
     if not self.enderPortal then return false end
-    
-    local dx = playerX - self.enderPortal.x
-    local dy = playerY - self.enderPortal.y
-    local dist = math.sqrt(dx * dx + dy * dy)
-    
-    return dist < (self.enderPortal.width / 2 + playerRadius)
+    local dx = px - self.enderPortal.x
+    local dy = py - self.enderPortal.y
+    local d = math.sqrt(dx*dx + dy*dy)
+    return d < (playerRadius + (self.enderPortal.w or 16) / 2)
 end
 
--- ==========================================
--- COLLISION, SPAWNING, AND LOGIC (UNCHANGED)
--- ==========================================
-
+-- Spawn helpers
 function Dungeon:getLeftmostSpawnPoint(w, h, padding)
     if #self.rooms == 0 then return nil end
-    padding = padding or 0
     local room = self.rooms[1]
     local x, y = room.cx, room.cy
     if self:canFitAtCenter(x, y, w, h, padding) then return x, y end
@@ -390,7 +658,6 @@ end
 
 function Dungeon:getRightmostSpawnPoint(w, h, padding)
     if #self.rooms == 0 then return nil end
-    padding = padding or 0
     local room = self.rooms[#self.rooms]
     local x, y = room.cx, room.cy
     if self:canFitAtCenter(x, y, w, h, padding) then return x, y end
@@ -398,30 +665,18 @@ function Dungeon:getRightmostSpawnPoint(w, h, padding)
 end
 
 function Dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, padding, knightX, knightY)
-    if #self.rooms == 0 then return {} end
-    padding = padding or 0
-    knightX = knightX or 0
-    knightY = knightY or 0
-    local safeRadius = 150
     local results = {}
-    for roomIdx = 2, #self.rooms do
+    padding = padding or 0
+    knightX = knightX or 0; knightY = knightY or 0
+    local safeR = 150
+    for i = 2, #self.rooms do
         if #results >= count then break end
-        local room = self.rooms[roomIdx]
+        local room = self.rooms[i]
         local x = room.cx + math.random(-room.w/3, room.w/3)
         local y = room.cy + math.random(-room.h/3, room.h/3)
-        local distSq = (x - knightX)^2 + (y - knightY)^2
-        if distSq > safeRadius * safeRadius then
+        if (x - knightX)^2 + (y - knightY)^2 > safeR * safeR then
             if self:canFitAtCenter(x, y, w, h, padding) then
-                local duplicate = false
-                for _, existingSpot in ipairs(results) do
-                    if math.abs(existingSpot.x - x) < 30 and math.abs(existingSpot.y - y) < 30 then
-                        duplicate = true
-                        break
-                    end
-                end
-                if not duplicate then
-                    table.insert(results, {x = x, y = y})
-                end
+                table.insert(results, {x = x, y = y})
             end
         end
     end
@@ -431,13 +686,10 @@ end
 function Dungeon:getRandomSpawnPoint(w, h, padding)
     if #self.walkableTiles == 0 then return nil end
     padding = padding or 0
-    local indices = {}
-    for i = 1, #self.walkableTiles do table.insert(indices, i) end
-    for i = #indices, 2, -1 do
-        local j = math.random(i)
-        indices[i], indices[j] = indices[j], indices[i]
-    end
-    for _, idx in ipairs(indices) do
+    local shuffled = {}
+    for i=1,#self.walkableTiles do table.insert(shuffled, i) end
+    for i=#shuffled,2,-1 do local j = math.random(i); shuffled[i], shuffled[j] = shuffled[j], shuffled[i] end
+    for _, idx in ipairs(shuffled) do
         local spot = self.walkableTiles[idx]
         local x = (spot.x - 0.5) * self.gridSize
         local y = (spot.y - 0.5) * self.gridSize
@@ -446,38 +698,38 @@ function Dungeon:getRandomSpawnPoint(w, h, padding)
     return nil
 end
 
+-- collision & LOS
 function Dungeon:isBlocked(x, y)
     if x < 0 or y < 0 or x >= self.width or y >= self.height then return true end
-    local px = math.floor(x)
-    local py = math.floor(y)
-    return not (self.walkableMap[py] and self.walkableMap[py][px])
+    local tx = math.floor(x / self.gridSize) + 1
+    local ty = math.floor(y / self.gridSize) + 1
+    if not self.collisionMap[ty] or self.collisionMap[ty][tx] == nil then return true end
+    return self.collisionMap[ty][tx]
 end
 
-function Dungeon:hasLineOfSight(x1, y1, x2, y2)
-    local dx = x2 - x1
-    local dy = y2 - y1
-    local dist = math.sqrt(dx * dx + dy * dy)
+function Dungeon:hasLineOfSight(x1,y1,x2,y2)
+    local dx = x2 - x1; local dy = y2 - y1
+    local dist = math.sqrt(dx*dx + dy*dy)
     if dist < 1 then return true end
-    local stepSize = self.gridSize / 2
-    local steps = math.floor(dist / stepSize)
-    for i = 1, steps do
-        local tx = x1 + (dx / dist) * (i * stepSize)
-        local ty = y1 + (dy / dist) * (i * stepSize)
+    local step = self.gridSize / 2
+    local steps = math.floor(dist / step)
+    for i=1,steps do
+        local tx = x1 + (dx / dist) * (i * step)
+        local ty = y1 + (dy / dist) * (i * step)
         if self:isBlocked(tx, ty) then return false end
     end
     return true
 end
 
--- FIXED: Collision detection without blind spots
-function Dungeon:isColliding(x, y, w, h)
+function Dungeon:isColliding(x,y,w,h)
     if x < 0 or y < 0 or x + w > self.width or y + h > self.height then return true end
     local epsilon = 0.0001
-    local startTileX = math.floor(x / self.gridSize) + 1
-    local startTileY = math.floor(y / self.gridSize) + 1
-    local endTileX = math.floor((x + w - epsilon) / self.gridSize) + 1
-    local endTileY = math.floor((y + h - epsilon) / self.gridSize) + 1
-    for ty = startTileY, endTileY do
-        for tx = startTileX, endTileX do
+    local sx = math.floor(x / self.gridSize) + 1
+    local sy = math.floor(y / self.gridSize) + 1
+    local ex = math.floor((x + w - epsilon) / self.gridSize) + 1
+    local ey = math.floor((y + h - epsilon) / self.gridSize) + 1
+    for ty = sy, ey do
+        for tx = sx, ex do
             if not self.collisionMap[ty] or self.collisionMap[ty][tx] == nil then return true end
             if self.collisionMap[ty][tx] then return true end
         end
@@ -485,13 +737,12 @@ function Dungeon:isColliding(x, y, w, h)
     return false
 end
 
-function Dungeon:canFitAtCenter(x, y, w, h, padding)
+function Dungeon:canFitAtCenter(x,y,w,h,padding)
     if not w or not h then return true end
     padding = padding or 0
-    local left = x - w / 2
-    local top = y - h / 2
+    local left = x - w/2; local top = y - h/2
     if left < padding or top < padding or left + w > self.width - padding or top + h > self.height - padding then return false end
-    return not self:isColliding(x - w / 2, y - h / 2, w, h)
+    return not self:isColliding(x - w/2, y - h/2, w, h)
 end
 
 return Dungeon

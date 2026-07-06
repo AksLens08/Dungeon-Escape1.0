@@ -24,6 +24,11 @@ Effect = require("system.effect")
 local Camera = require("system.camera")
 local UI = require("graphics.ui")
 
+-- Ensure nearest-neighbor scaling for crisp pixel art
+if love and love.graphics and love.graphics.setDefaultFilter then
+    love.graphics.setDefaultFilter("nearest", "nearest", 0)
+end
+
 -- Game state variables
 gameState = "menu"
 local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses
@@ -66,8 +71,8 @@ local function startGame()
     coinsCollected = 0
     gameWon = false
     
-    -- Initialize Dungeon (The new dungeon.lua will automatically load graphics/dungeon_tiles.png)
-    dungeon = Dungeon:new("graphics/dungeon.png", 16)
+    -- Initialize Dungeon (tileset disabled; use procedural renderer)
+    dungeon = Dungeon:new(nil, 16)
     
     local spawnX, spawnY = dungeon:getLeftmostSpawnPoint(Knight.HITBOX_W, Knight.HITBOX_H, SPAWN_PADDING)
     if not spawnX then
@@ -142,7 +147,7 @@ local function startGame()
     end
 
     minimap = Minimap:new(dungeon)
-    lighting = Lighting:new(player)
+    lighting = Lighting:new(player, dungeon)
 
     -- Initialize camera
     local sw = love.graphics.getWidth()
@@ -294,6 +299,7 @@ function love.update(dt)
         
         Camera:update(dt, player)
         Audio:updateHeartbeat(dt, player, gameState)
+        if lighting then lighting:update(dt) end
 
         -- NEW: Check if player reached the Ender Portal
         checkEnderPortal()
@@ -516,8 +522,8 @@ function love.draw()
         local camX, camY = Camera:getPosition()
 
         love.graphics.push()
-        love.graphics.scale(3, 3) 
-        love.graphics.translate(-camX / 3 + sx, -camY / 3 + sy)
+        love.graphics.scale(3, 3)
+        love.graphics.translate(math.floor(-camX / 3 + sx + 0.5), math.floor(-camY / 3 + sy + 0.5))
 
         if dungeon and type(dungeon.render) == "function" then dungeon:render() end
         if coins then Coin.drawAll(coins) end
