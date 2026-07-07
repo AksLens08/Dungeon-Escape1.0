@@ -295,42 +295,63 @@ local function tutorialStageIsClear()
     end
 
     if not enemies then return false end
+    local alive = false
     for _, enemy in ipairs(enemies) do
         if enemy and enemy.hp and enemy.hp > 0 then
-            return false
+            alive = true
+            break
         end
     end
 
-    return true
+    return not alive
+end
+
+local function ensureTutorialPortal()
+    if not tutorial or not tutorial:isActive() or not dungeon or not player then return end
+    if dungeon.enderPortal and tutorialStageIsClear() then return end
+    if not tutorialStageIsClear() then return end
+
+    local stage = tutorial:getCurrentStage()
+    local portalRoom = nil
+    if stage and stage.portalRoom then
+        portalRoom = dungeon.rooms[stage.portalRoom]
+    end
+    if not portalRoom and #dungeon.rooms > 0 then
+        portalRoom = dungeon.rooms[#dungeon.rooms]
+    end
+    if portalRoom then
+        dungeon:createEnderPortal(portalRoom)
+    end
 end
 
 local function checkEnderPortal()
-    if not gameWon and dungeon and player and dungeon:playerReachedExit(player.x, player.y, 16) then
+    if not gameWon and dungeon and player then
         if tutorial and tutorial:isActive() then
+            ensureTutorialPortal()
             if not tutorialStageIsClear() then
                 return
             end
 
-            player = nil
-            dungeon = nil
-            tutorial:advance()
-            if tutorial:isActive() then
+            if dungeon:playerReachedExit(player.x, player.y, 16) then
+                player = nil
+                dungeon = nil
+                tutorial:advance()
                 gameState = "play"
                 startGame()
-            else
-                gameWon = true
-                gameState = "win"
+                Audio:stop("background_music")
+                Audio:stopHeartbeat()
+                return
             end
-            Audio:stop("background_music")
-            Audio:stopHeartbeat()
             return
         end
 
-        gameWon = true
-        gameState = "win"
-        Audio:stop("background_music")
-        Audio:play("victory_song")
-        Audio:stopHeartbeat()
+        if dungeon:playerReachedExit(player.x, player.y, 16) then
+            gameWon = true
+            gameState = "win"
+            Audio:stop("background_music")
+            Audio:play("victory_song")
+            Audio:stopHeartbeat()
+        end
     end
 end
 
@@ -404,17 +425,32 @@ function love.update(dt)
                     end
                 end
 
-                if (player.state == "attack" or player.state == "run_attack") and player.frame == 2 and enemy.hp > 0 then
+                local shouldApplyMeleeHit = false
+                if player and player.state and (player.state == "attack" or player.state == "run_attack") and enemy.hp > 0 then
+                    if selectedClass == "wizard" then
+                        if player.attackHitDone == nil then player.attackHitDone = false end
+                        if player.frame >= 2 and not player.attackHitDone then
+                            shouldApplyMeleeHit = true
+                            player.attackHitDone = true
+                        end
+                    elseif player.frame == 2 then
+                        shouldApplyMeleeHit = true
+                    end
+                elseif player and player.attackHitDone and player.state ~= "attack" and player.state ~= "run_attack" then
+                    player.attackHitDone = false
+                end
+
+                if shouldApplyMeleeHit then
                     local px, py = player:getCenter()
                     local ex, ey = enemy.x + (enemy.w or 0) / 2, enemy.y + (enemy.h or 0) / 2
                     if enemy.getCenter then ex, ey = enemy:getCenter() end
-                    
+
                     local dx, dy = px - ex, py - ey
                     local distSq = dx*dx + dy*dy
                     if distSq < 1000 then
                         local kbMult = (selectedClass == "wizard") and 0.5 or 1.0
                         enemy:takeDamage(player.damage, player, dungeon, kbMult)
-                        
+
                         Effect:triggerHitstop(0.06)
                         Effect:triggerShake(0.15, 2)
                         Effect:spawnParticles(ex, ey, {1, 0.2, 0.2, 1}, 6)

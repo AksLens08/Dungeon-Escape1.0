@@ -32,6 +32,7 @@ function Wizard:init(x, y)
     self.timer, self.frame = 0, 0
     self.animationFrames = {} 
     self.attackTimer, self.attackCooldown = 0, 0
+    self.attackHitDone = false
     self.invuln = 0
     
     -- Juice: Knockback variables
@@ -174,14 +175,21 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
             and self.attackTimer <= 0 and self.state ~= "flame" and projectiles then
             self.state = "flame"
             self.flameHitDone = false
-            self.mana = self.mana - 20 
+            self.flameSwingFrame = 3
+            self.mana = self.mana - 20
             Audio:play("fireball")
             self.dx, self.dy = 0, 0
-            self.attackTimer = 0.84 
+            self.attackTimer = 0.7
             self.attackCooldown = 1.0
+            self.frame = 0
+            self.timer = 0
         elseif gMouse.leftDown and self.attackCooldown <= 0 and self.attackTimer <= 0 then
             self.state = "attack"
-            self.attackTimer = 0.35
+            self.attackTimer = 0.55
+            self.attackHitDone = false
+            self.attackSwingFrame = 2
+            self.frame = 0
+            self.timer = 0
             Audio:play("sword_slice")
             self.attackCooldown = 1.0
         elseif self.invuln > 0.6 then
@@ -203,8 +211,25 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
         self:updateTexture()
     end
 
+    if self.state == "attack" and self.attackSwingFrame and self.frame >= self.attackSwingFrame and not self.attackHitDone and enemies then
+        self.attackHitDone = true
+        local px, py = self:getCenter()
+        for _, enemy in ipairs(enemies) do
+            if enemy.hp and enemy.hp > 0 then
+                local ex, ey = enemy.x + (enemy.w or 0) / 2, enemy.y + (enemy.h or 0) / 2
+                if enemy.getCenter then ex, ey = enemy:getCenter() end
+                local dx, dy = ex - px, ey - py
+                local distSq = dx * dx + dy * dy
+                local isFacing = (self.direction == "right" and dx > 0) or (self.direction == "left" and dx < 0)
+                if isFacing and distSq < 1800 then
+                    enemy:takeDamage(self.damage or 20, self, dungeon, 1.0)
+                end
+            end
+        end
+    end
+
     -- Flame jet collision check
-    if self.state == "flame" and self.frame == 8 and not self.flameHitDone and enemies then
+    if self.state == "flame" and self.flameSwingFrame and self.frame >= self.flameSwingFrame and not self.flameHitDone and enemies then
         self.flameHitDone = true
         local px, py = self:getCenter()
         for _, enemy in ipairs(enemies) do
@@ -250,14 +275,24 @@ function Wizard:handleAnimation(dt)
     self.timer = self.timer + dt
     local maxFrames = self.animationFrames[self.state] or 1
     local frameDuration = self.animationSpeeds[self.state] or 0.1
-    
+
     if self.timer > frameDuration then
         self.timer = 0
 
         if self.state == "death" then
             if self.frame < maxFrames - 1 then self.frame = self.frame + 1 else self.deadAnimationComplete = true end
         elseif self.state == "flame" or self.state == "attack" or self.state == "hurt" then
-            if self.frame < maxFrames - 1 then self.frame = self.frame + 1 end
+            if self.frame < maxFrames - 1 then
+                self.frame = self.frame + 1
+            elseif self.state == "attack" then
+                self.state = "idle"
+                self.frame = 0
+                self.attackHitDone = true
+            elseif self.state == "flame" then
+                self.state = "idle"
+                self.frame = 0
+                self.flameHitDone = true
+            end
         else
             self.frame = (self.frame + 1) % maxFrames
         end

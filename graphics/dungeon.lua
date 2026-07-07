@@ -72,14 +72,16 @@ end
 
 -- Procedural dungeon generator: place rooms and corridors into walkableGrid
 function Dungeon:generateProceduralDungeon()
-    -- initialize grid-based walkable map to non-walkable
     local tilesX = math.floor(self.width / self.gridSize)
     local tilesY = math.floor(self.height / self.gridSize)
-    self.tilesX = tilesX; self.tilesY = tilesY
+    self.tilesX = tilesX
+    self.tilesY = tilesY
     self.walkableGrid = {}
     for ty = 1, tilesY do
         self.walkableGrid[ty] = {}
-        for tx = 1, tilesX do self.walkableGrid[ty][tx] = false end
+        for tx = 1, tilesX do
+            self.walkableGrid[ty][tx] = false
+        end
     end
 
     self.rooms = {}
@@ -95,164 +97,134 @@ function Dungeon:generateProceduralDungeon()
     self.cobwebs = {}
     self.enderPortal = nil
 
-    local padding = 120
-    local centralW = 320
-    local centralH = 240
-    local startX = math.max(padding, math.floor((self.width - centralW) / 2))
-    local startY = math.max(padding, math.floor((self.height - centralH) / 2))
-    self:carveRoom(startX, startY, centralW, centralH)
-
-    local centralRoom = {
-        x = startX,
-        y = startY,
-        w = centralW,
-        h = centralH,
-        cx = startX + centralW / 2,
-        cy = startY + centralH / 2,
-        shape = "rect",
-        kind = "central"
+    local margin = 180
+    local roomW, roomH = 260, 200
+    local splitCount = 4
+    local root = {
+        x = margin,
+        y = margin,
+        w = self.width - margin * 2,
+        h = self.height - margin * 2,
+        depth = 0,
     }
-    table.insert(self.rooms, centralRoom)
 
-    local function tryPlaceRoom(anchor, targetX, targetY, w, h, kind)
-        local candidates = {
-            {targetX, targetY},
-            {targetX + 80, targetY},
-            {targetX - 80, targetY},
-            {targetX, targetY + 80},
-            {targetX, targetY - 80},
-            {targetX + 120, targetY + 70},
-            {targetX - 120, targetY - 70},
+    local function splitNode(node)
+        if node.depth >= 3 then return end
+        local splitHorizontally = (node.w > node.h and node.w / node.h >= 1.25) or (node.h > node.w and node.h / node.w >= 1.25)
+        if splitHorizontally then
+            local split = math.random(math.floor(node.h * 0.28), math.floor(node.h * 0.42))
+            node.left = {x = node.x, y = node.y, w = node.w, h = split, depth = node.depth + 1}
+            node.right = {x = node.x, y = node.y + split, w = node.w, h = node.h - split, depth = node.depth + 1}
+        else
+            local split = math.random(math.floor(node.w * 0.28), math.floor(node.w * 0.42))
+            node.left = {x = node.x, y = node.y, w = split, h = node.h, depth = node.depth + 1}
+            node.right = {x = node.x + split, y = node.y, w = node.w - split, h = node.h, depth = node.depth + 1}
+        end
+    end
+
+    local nodes = {root}
+    for _ = 1, splitCount do
+        local index = math.random(1, #nodes)
+        local node = nodes[index]
+        if node.w > 260 and node.h > 220 then
+            splitNode(node)
+            table.remove(nodes, index)
+            table.insert(nodes, node.left)
+            table.insert(nodes, node.right)
+        end
+    end
+
+    local function placeLeafRoom(node)
+        local roomPadding = 40
+        local roomW = math.max(140, math.floor(node.w * (0.5 + math.random() * 0.2)))
+        local roomH = math.max(110, math.floor(node.h * (0.5 + math.random() * 0.2)))
+        roomW = math.min(roomW, node.w - roomPadding * 2)
+        roomH = math.min(roomH, node.h - roomPadding * 2)
+        local roomX = node.x + roomPadding + math.random(0, math.max(0, math.floor(node.w - roomW - roomPadding * 2)))
+        local roomY = node.y + roomPadding + math.random(0, math.max(0, math.floor(node.h - roomH - roomPadding * 2)))
+        local room = {
+            x = roomX,
+            y = roomY,
+            w = roomW,
+            h = roomH,
+            cx = roomX + roomW / 2,
+            cy = roomY + roomH / 2,
+            shape = "rect",
+            kind = "branch",
         }
-
-        for _, candidate in ipairs(candidates) do
-            local x = math.max(padding, math.min(self.width - w - padding, candidate[1]))
-            local y = math.max(padding, math.min(self.height - h - padding, candidate[2]))
-            if self:canPlaceRoom(x, y, w, h, 70) then
-                self:carveRoom(x, y, w, h)
-                local room = {
-                    x = x,
-                    y = y,
-                    w = w,
-                    h = h,
-                    cx = x + w / 2,
-                    cy = y + h / 2,
-                    shape = "organic",
-                    kind = kind or "branch"
-                }
-                table.insert(self.rooms, room)
-
-                local sx, sy = self:getRoomConnectionPoint(anchor, room.cx, room.cy)
-                local ex, ey = self:getRoomConnectionPoint(room, anchor.cx, anchor.cy)
-                self:carveCorridor(sx, sy, ex, ey)
-                return room
-            end
-        end
-
-        return nil
+        return room
     end
 
-    local function connectRooms(a, b)
-        if a and b then
-            local sx, sy = self:getRoomConnectionPoint(a, b.cx, b.cy)
-            local ex, ey = self:getRoomConnectionPoint(b, a.cx, a.cy)
-            self:carveCorridor(sx, sy, ex, ey)
+    local leafRooms = {}
+    for _, node in ipairs(nodes) do
+        if node.w > 120 and node.h > 90 then
+            local room = placeLeafRoom(node)
+            table.insert(leafRooms, room)
+            table.insert(self.rooms, room)
+            self:carveRoom(room.x, room.y, room.w, room.h)
         end
     end
 
-    local branchRooms = {}
-    local branchSpecs = {
-        {kind = "branch", w = 200, h = 140, tx = centralRoom.cx, ty = centralRoom.cy - 360},
-        {kind = "branch", w = 180, h = 140, tx = centralRoom.cx + 390, ty = centralRoom.cy},
-        {kind = "branch", w = 180, h = 140, tx = centralRoom.cx, ty = centralRoom.cy + 360},
-        {kind = "branch", w = 200, h = 150, tx = centralRoom.cx - 390, ty = centralRoom.cy},
-    }
-
-    for _, spec in ipairs(branchSpecs) do
-        local room = tryPlaceRoom(centralRoom, spec.tx - spec.w / 2, spec.ty - spec.h / 2, spec.w, spec.h, spec.kind)
-        if room then table.insert(branchRooms, room) end
+    if #self.rooms > 0 then
+        local hub = self.rooms[1]
+        hub.kind = "central"
+        hub.tint = {0.32, 0.36, 0.40}
+        hub.accent = {0.38, 0.42, 0.46}
+        hub.w = math.max(hub.w, 260)
+        hub.h = math.max(hub.h, 200)
+        hub.x = math.max(margin, math.min(self.width - hub.w - margin, hub.x - 20))
+        hub.y = math.max(margin, math.min(self.height - hub.h - margin, hub.y - 20))
+        hub.cx = hub.x + hub.w / 2
+        hub.cy = hub.y + hub.h / 2
+        self:carveRoom(hub.x, hub.y, hub.w, hub.h)
     end
 
     local treasureRoom = nil
-    if branchRooms[2] then
-        treasureRoom = tryPlaceRoom(branchRooms[2], branchRooms[2].cx + 220, branchRooms[2].cy - 50, 220, 160, "treasure")
-    end
-
-    local puzzleRoom = nil
-    if branchRooms[1] then
-        puzzleRoom = tryPlaceRoom(branchRooms[1], branchRooms[1].cx - 180, branchRooms[1].cy + 30, 180, 140, "puzzle")
-    end
-
-    local hiddenRoom = nil
-    if puzzleRoom then
-        hiddenRoom = tryPlaceRoom(puzzleRoom, puzzleRoom.cx - 130, puzzleRoom.cy + 90, 120, 100, "secret")
-    end
-
-    local mysteryRoom = nil
-    if branchRooms[4] then
-        mysteryRoom = tryPlaceRoom(branchRooms[4], branchRooms[4].cx - 130, branchRooms[4].cy - 180, 160, 110, "mystery")
-    end
-
-    if branchRooms[1] and branchRooms[3] then connectRooms(branchRooms[1], branchRooms[3]) end
-    if branchRooms[2] and branchRooms[4] then connectRooms(branchRooms[2], branchRooms[4]) end
-    if branchRooms[2] and branchRooms[3] then connectRooms(branchRooms[2], branchRooms[3]) end
-    if treasureRoom and branchRooms[1] then connectRooms(treasureRoom, branchRooms[1]) end
-    if hiddenRoom and branchRooms[1] then connectRooms(hiddenRoom, branchRooms[1]) end
-
-    -- enlarge the central chamber and treasure room to read clearly on the map
-    if centralRoom then
-        centralRoom.w = math.max(centralRoom.w, 320)
-        centralRoom.h = math.max(centralRoom.h, 260)
-        centralRoom.x = math.max(padding, math.min(self.width - centralRoom.w - padding, centralRoom.x - 20))
-        centralRoom.y = math.max(padding, math.min(self.height - centralRoom.h - padding, centralRoom.y - 20))
-        centralRoom.cx = centralRoom.x + centralRoom.w / 2
-        centralRoom.cy = centralRoom.y + centralRoom.h / 2
-        self:carveRoom(centralRoom.x, centralRoom.y, centralRoom.w, centralRoom.h)
-    end
-
-    if treasureRoom then
-        treasureRoom.w = math.max(treasureRoom.w, 220)
-        treasureRoom.h = math.max(treasureRoom.h, 160)
-        treasureRoom.x = math.max(padding, math.min(self.width - treasureRoom.w - padding, treasureRoom.x))
-        treasureRoom.y = math.max(padding, math.min(self.height - treasureRoom.h - padding, treasureRoom.y))
+    if #self.rooms > 2 then
+        treasureRoom = self.rooms[#self.rooms]
+        treasureRoom.kind = "treasure"
+        treasureRoom.tint = {0.40, 0.33, 0.24}
+        treasureRoom.accent = {0.56, 0.42, 0.20}
+        treasureRoom.x = math.max(margin, math.min(self.width - treasureRoom.w - margin, treasureRoom.x + 40))
+        treasureRoom.y = math.max(margin, math.min(self.height - treasureRoom.h - margin, treasureRoom.y + 20))
         treasureRoom.cx = treasureRoom.x + treasureRoom.w / 2
         treasureRoom.cy = treasureRoom.y + treasureRoom.h / 2
         self:carveRoom(treasureRoom.x, treasureRoom.y, treasureRoom.w, treasureRoom.h)
     end
 
-    self:smoothWalkableGrid(1)
+    local corridorRooms = {}
+    for i = 2, #self.rooms do
+        local room = self.rooms[i]
+        local anchor = self.rooms[1]
+        local sx, sy = self:getRoomConnectionPoint(anchor, room.cx, room.cy)
+        local ex, ey = self:getRoomConnectionPoint(room, anchor.cx, anchor.cy)
+        self:carveCorridor(sx, sy, ex, ey)
+        table.insert(corridorRooms, {from = anchor, to = room})
+    end
+
+    if treasureRoom then
+        local anchor = self.rooms[2] or self.rooms[1]
+        local sx, sy = self:getRoomConnectionPoint(anchor, treasureRoom.cx, treasureRoom.cy)
+        local ex, ey = self:getRoomConnectionPoint(treasureRoom, anchor.cx, anchor.cy)
+        self:carveCorridor(sx, sy, ex, ey)
+    end
+
+    self:smoothWalkableGrid(2)
     self:ensureConnectivity()
 
     if treasureRoom then
         self:createEnderPortal(treasureRoom)
-    else
+    elseif #self.rooms > 0 then
         self:createEnderPortal(self.rooms[#self.rooms])
     end
 
     for _, room in ipairs(self.rooms) do
-        room.tint = room.kind == "treasure" and {0.42, 0.34, 0.26} or room.kind == "puzzle" and {0.30, 0.34, 0.38} or room.kind == "secret" and {0.18, 0.20, 0.22} or room.kind == "mystery" and {0.24, 0.22, 0.26} or {0.28 + math.random() * 0.06, 0.32 + math.random() * 0.06, 0.36 + math.random() * 0.06}
-        room.accent = {math.max(0, room.tint[1] + (room.kind == "treasure" and 0.08 or 0.02)), math.max(0, room.tint[2] + (room.kind == "treasure" and 0.06 or 0.02)), math.max(0, room.tint[3] + (room.kind == "treasure" and 0.02 or 0.02))}
+        room.tint = room.kind == "treasure" and {0.40, 0.33, 0.24} or room.kind == "central" and {0.32, 0.36, 0.40} or {0.28 + math.random() * 0.06, 0.32 + math.random() * 0.06, 0.36 + math.random() * 0.06}
+        room.accent = {math.max(0, room.tint[1] + 0.02), math.max(0, room.tint[2] + 0.02), math.max(0, room.tint[3] + 0.02)}
         room.patternSeed = math.random(1, 100000)
-        if room.kind == "central" then
-            room.tint = {0.32, 0.36, 0.40}
-            room.accent = {0.38, 0.42, 0.46}
-        elseif room.kind == "treasure" then
-            room.tint = {0.40, 0.33, 0.24}
-            room.accent = {0.56, 0.42, 0.20}
-        elseif room.kind == "puzzle" then
-            room.tint = {0.28, 0.32, 0.36}
-            room.accent = {0.20, 0.28, 0.34}
-        elseif room.kind == "secret" then
-            room.tint = {0.18, 0.20, 0.24}
-            room.accent = {0.24, 0.26, 0.30}
-        elseif room.kind == "mystery" then
-            room.tint = {0.24, 0.22, 0.26}
-            room.accent = {0.30, 0.28, 0.32}
-        end
-
         if math.random() > 0.45 then
             local num = math.random(1, 3)
-            for p = 1, num do
+            for _ = 1, num do
                 table.insert(self.pillars, {x = room.x + math.random(20, room.w - 20), y = room.y + math.random(20, room.h - 20)})
             end
         end
@@ -816,7 +788,6 @@ function Dungeon:buildStaticCanvas()
     end
     local ts = self.tileSize
 
-    -- draw room floors
     for _, room in ipairs(self.rooms) do
         local tint = room.tint or self.simpleFloorColor
         love.graphics.setColor(tint)
@@ -825,12 +796,6 @@ function Dungeon:buildStaticCanvas()
         if room.kind == "treasure" then
             love.graphics.setColor(0.55, 0.42, 0.18, 0.22)
             love.graphics.rectangle("fill", ix(room.x + room.w * 0.18), ix(room.y + room.h * 0.18), ix(room.w * 0.64), ix(room.h * 0.64))
-        elseif room.kind == "puzzle" then
-            love.graphics.setColor(0.22, 0.28, 0.32, 0.20)
-            love.graphics.rectangle("fill", ix(room.x + room.w * 0.16), ix(room.y + room.h * 0.16), ix(room.w * 0.68), ix(room.h * 0.68))
-        elseif room.kind == "secret" then
-            love.graphics.setColor(0.08, 0.10, 0.12, 0.16)
-            love.graphics.rectangle("fill", ix(room.x + room.w * 0.28), ix(room.y + room.h * 0.28), ix(room.w * 0.44), ix(room.h * 0.44))
         end
 
         for py = room.y, room.y + room.h - 1, ts do
@@ -845,7 +810,6 @@ function Dungeon:buildStaticCanvas()
         end
     end
 
-    -- draw corridor / other floors
     love.graphics.setColor(self.simpleFloorColor)
     for ty = 0, self.simpleTilesY - 1 do
         for tx = 0, self.simpleTilesX - 1 do
@@ -865,44 +829,11 @@ function Dungeon:buildStaticCanvas()
                     local n = noise(px, py)
                     love.graphics.setColor(self.simpleFloorColor[1] + (n - 0.5) * 0.06, self.simpleFloorColor[2] + (n - 0.5) * 0.06, self.simpleFloorColor[3] + (n - 0.5) * 0.06)
                     love.graphics.rectangle("fill", ix(px), ix(py), ts, ts)
-                    if n > 0.86 then
-                        love.graphics.setColor(0.12, 0.14, 0.16)
-                        love.graphics.rectangle("fill", ix(px + (n - 0.5) * ts), ix(py + (1 - n) * ts), 2, 1)
-                        love.graphics.setColor(self.simpleFloorColor)
-                    end
                 end
             end
         end
     end
 
-    -- draw a continuous wall shell around every walkable room and corridor tile
-    love.graphics.setColor({quant(self.simpleWallColor[1]), quant(self.simpleWallColor[2]), quant(self.simpleWallColor[3])})
-    for ty = 0, self.simpleTilesY - 1 do
-        for tx = 0, self.simpleTilesX - 1 do
-            local px = tx * ts
-            local py = ty * ts
-            local midX = math.floor(px + ts/2)
-            local midY = math.floor(py + ts/2)
-            if self:cellIsWalkable(midX, midY) then
-                local north = not self:cellIsWalkable(midX, midY - self.gridSize)
-                local south = not self:cellIsWalkable(midX, midY + self.gridSize)
-                local west = not self:cellIsWalkable(midX - self.gridSize, midY)
-                local east = not self:cellIsWalkable(midX + self.gridSize, midY)
-
-                if north then love.graphics.rectangle("fill", ix(px), ix(py), ts, 2) end
-                if west then love.graphics.rectangle("fill", ix(px), ix(py), 2, ts) end
-                if south then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), ts, 2) end
-                if east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, ts) end
-
-                if north and west then love.graphics.rectangle("fill", ix(px), ix(py), 2, 2) end
-                if north and east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, 2) end
-                if south and west then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), 2, 2) end
-                if south and east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py + ts - 2), 2, 2) end
-            end
-        end
-    end
-
-    -- draw walls after floors so they never cover the room/corridor openings
     love.graphics.setColor({quant(self.simpleWallColor[1]), quant(self.simpleWallColor[2]), quant(self.simpleWallColor[3])})
     for ty = 0, self.simpleTilesY - 1 do
         for tx = 0, self.simpleTilesX - 1 do
@@ -912,45 +843,6 @@ function Dungeon:buildStaticCanvas()
             local midY = math.floor(py + ts/2)
             if self:shouldDrawWallTile(midX, midY) then
                 love.graphics.rectangle("fill", ix(px), ix(py), ts, ts)
-            end
-        end
-    end
-
-    -- draw wall detail
-    for ty = 0, self.simpleTilesY - 1 do
-        for tx = 0, self.simpleTilesX - 1 do
-            local px = tx * ts
-            local py = ty * ts
-            local midX = math.floor(px + ts/2)
-            local midY = math.floor(py + ts/2)
-            if self:shouldDrawWallTile(midX, midY) then
-                local north = self:cellIsWalkable(midX, midY - self.gridSize)
-                local south = self:cellIsWalkable(midX, midY + self.gridSize)
-                local west = self:cellIsWalkable(midX - self.gridSize, midY)
-                local east = self:cellIsWalkable(midX + self.gridSize, midY)
-                love.graphics.setColor(0,0,0)
-                if north then love.graphics.rectangle("fill", ix(px), ix(py), ts, 2) end
-                if west then love.graphics.rectangle("fill", ix(px), ix(py), 2, ts) end
-                love.graphics.setColor(1,1,1,0.09)
-                if south then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), ts, 2) end
-                if east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, ts) end
-                if north then love.graphics.rectangle("fill", ix(px) + 1, ix(py) + 1, ts - 2, 1) end
-
-                -- extra wall detailing: moss and subtle brick lines where wall meets floor
-                local adjacent = north or south or west or east
-                if adjacent then
-                    local n = noise(tx, ty)
-                    if n > 0.88 then
-                        love.graphics.setColor(0.14, 0.28, 0.12, 0.85)
-                        love.graphics.circle("fill", ix(px + ts * (0.2 + (n - 0.88) * 0.6)), ix(py + ts * (0.2 + (n - 0.88) * 0.6)), 2)
-                    end
-                    love.graphics.setColor(0,0,0,0.06)
-                    for by = 4, ts - 4, 6 do
-                        love.graphics.rectangle("fill", ix(px + 2), ix(py + by), ts - 4, 1)
-                    end
-                end
-
-                love.graphics.setColor(1,1,1)
             end
         end
     end

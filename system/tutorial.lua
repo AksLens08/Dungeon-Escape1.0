@@ -1,5 +1,5 @@
 -- system/tutorial.lua
--- Lightweight stage-based tutorial controller for static dungeon layouts
+-- Two-stage tutorial controller for static linear dungeon rooms
 local Tutorial = {}
 Tutorial.__index = Tutorial
 
@@ -10,8 +10,8 @@ end
 local function makeLayout(rooms, connections, exitRoom)
     return {
         rooms = rooms,
-        connections = connections,
-        exitRoom = exitRoom,
+        connections = connections or {},
+        exitRoom = exitRoom or 1,
     }
 end
 
@@ -27,123 +27,65 @@ function Tutorial:new(heroType)
         {
             id = "intro",
             title = "First Steps",
-            prompt = "Move with WASD and reach the exit. This room is safe.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
-            enemies = {}
-        },
-        {
-            id = "skill_demo",
-            title = self.heroType == "wizard" and "Wizard Skill Demo" or "Knight Skill Demo",
-            prompt = self.heroType == "wizard"
-                and "Skill demo: left click fires a bolt, and right click unleashes a flame jet."
-                or "Skill demo: left click attacks, and right click lets you defend.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
-            enemies = {}
-        },
-        {
-            id = "blue",
-            title = "Blue Slime",
-            prompt = "A blue slime lunges at close range. Circle it, then strike when it commits.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
+            prompt = "Use WASD to move around the room. Left click to attack, and defeat the slime before you step through the portal.",
+            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, 1),
             enemies = {
-                {type = "blue_slime", x = 900, y = 340}
-            }
+                {type = "blue_slime", x = 380, y = 340},
+            },
+            portalUnlocked = false,
         },
         {
-            id = "red",
+            id = "red_slime",
             title = "Red Slime",
-            prompt = "The red slime is more aggressive. Keep your footing and punish its rush.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
+            prompt = "The red slime is more aggressive. Keep your footing and punish it when it commits to a charge.",
+            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, 1),
             enemies = {
-                {type = "red_slime", x = 900, y = 340}
-            }
+                {type = "red_slime", x = 900, y = 340},
+            },
+            portalUnlocked = false,
         },
         {
-            id = "green",
+            id = "green_slime",
             title = "Green Slime",
-            prompt = "The green slime is patient. Wait for an opening and then attack.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
+            prompt = "The green slime is patient. Wait for a clean opening and strike once it gives you one.",
+            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, 1),
             enemies = {
-                {type = "green_slime", x = 900, y = 340}
-            }
+                {type = "green_slime", x = 380, y = 340},
+            },
+            portalUnlocked = false,
         },
         {
             id = "archer",
-            title = "Archer",
-            prompt = "The archer keeps distance. Use the room space to dodge and close the gap.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
+            title = self.heroType == "wizard" and "Wizard Ranged Trial" or "Archer Trial",
+            prompt = self.heroType == "wizard"
+                and "This foe fights from range. Keep moving, time your sword swing, and press the attack when the opening appears."
+                or "This archer fights from range. Keep moving, time your attack, and punish the opening after its shot.",
+            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, 1),
             enemies = {
-                {type = "skeleton_archer", x = 900, y = 340}
-            }
+                {type = "skeleton_archer", x = 900, y = 340},
+            },
+            portalUnlocked = false,
         },
         {
             id = "warrior",
             title = "Warrior",
-            prompt = "The warrior is sturdy. Stay mobile and strike after its swings.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
+            prompt = "The warrior is sturdy. Stay mobile and strike after its swings so you do not get pinned down.",
+            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, 1),
             enemies = {
-                {type = "skeleton_warrior", x = 900, y = 340}
-            }
+                {type = "skeleton_warrior", x = 380, y = 340},
+            },
+            portalUnlocked = false,
         },
         {
             id = "spearman",
             title = "Spearman",
-            prompt = "The spearman controls space with long reach. Keep your movement tight.",
-            layout = makeLayout(
-                {makeRoom(220, 240, 320, 260), makeRoom(760, 240, 320, 260)},
-                {{1, 2}},
-                2
-            ),
+            prompt = "The spearman controls space with reach. Keep your movement tight and punish the moment it overcommits.",
+            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, 1),
             enemies = {
-                {type = "skeleton_spearman", x = 900, y = 340}
-            }
+                {type = "skeleton_spearman", x = 900, y = 340},
+            },
+            portalUnlocked = false,
         },
-        {
-            id = "mixed",
-            title = "Combined Trial",
-            prompt = "The final room mixes every foe. Use what you learned and survive.",
-            layout = makeLayout(
-                {makeRoom(220, 180, 320, 260), makeRoom(760, 180, 320, 260), makeRoom(1280, 180, 320, 260)},
-                {{1, 2}, {2, 3}},
-                3
-            ),
-            enemies = {
-                {type = "blue_slime", x = 860, y = 300},
-                {type = "red_slime", x = 990, y = 300},
-                {type = "green_slime", x = 1120, y = 300},
-                {type = "skeleton_archer", x = 860, y = 420},
-                {type = "skeleton_warrior", x = 990, y = 420},
-                {type = "skeleton_spearman", x = 1120, y = 420}
-            }
-        }
     }
     return self
 end
