@@ -35,6 +35,7 @@ function Knight:init(x, y)
 
     self.growthTimer = 0
     self.frameWidth, self.frameHeight = 128, 128
+    self.animationFrames = {}
     self.animationSpeeds = {
         idle = 0.12, walk = 0.08, run = 0.09, attack = 0.07, run_attack = 0.06,
         hurt = 0.1, death = 0.15, defend = 0.1

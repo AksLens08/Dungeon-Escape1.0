@@ -9,7 +9,10 @@ SkeletonArcher.HITBOX_H = 28
 function SkeletonArcher:new(x, y)
     local self = setmetatable({}, SkeletonArcher)
     self.w, self.h = SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H
-    self.x, self.y = x - self.w / 2, y - self.h / 2
+
+    local spawnX = tonumber(x) or 0
+    local spawnY = tonumber(y) or 0
+    self.x, self.y = spawnX - self.w / 2, spawnY - self.h / 2
 
     self.hp, self.maxHp = 40, 40
     self.speed = 50

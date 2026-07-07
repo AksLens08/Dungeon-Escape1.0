@@ -6,7 +6,7 @@ local Dungeon = Class.define()
 -- Create a new dungeon instance.
 -- imagePath: optional path to a tileset image (16x16 tiles)
 -- tileSize: logical tile size in pixels (default 16)
-function Dungeon:init(imagePath, tileSize, corridorWidth)
+function Dungeon:init(imagePath, tileSize, corridorWidth, tutorialStageData)
     self.tileSize = tileSize or 16
     -- configurable corridor/path width in pixels (multiple of gridSize is best)
     self.corridorWidth = corridorWidth or 40
@@ -45,7 +45,11 @@ function Dungeon:init(imagePath, tileSize, corridorWidth)
 
     -- build everything
     self:setupTileset()
-    self:generateProceduralDungeon()
+    if tutorialStageData then
+        self:generateTutorialDungeon(tutorialStageData)
+    else
+        self:generateProceduralDungeon()
+    end
     self:buildCollisionMap()
     self:buildSpriteBatch()
     self:buildStaticCanvas()
@@ -77,19 +81,29 @@ function Dungeon:generateProceduralDungeon()
         for tx = 1, tilesX do self.walkableGrid[ty][tx] = false end
     end
 
-    local minRoom = 90
-    local maxRoom = 260
-    local padding = 48
-    local maxAttempts = 900
-    local targetRooms = 24
+    local minRoom = 70
+    local maxRoom = 220
+    local padding = 56
+    local maxAttempts = 1400
+    local targetRooms = 28
 
-    -- place rooms
+    -- place rooms in a more natural cluster layout with varied sizes
     for attempt = 1, maxAttempts do
         if #self.rooms >= targetRooms then break end
         local w = math.random(minRoom, maxRoom)
         local h = math.random(minRoom, maxRoom)
-        local x = math.random(padding, self.width - w - padding)
-        local y = math.random(padding, self.height - h - padding)
+
+        local x, y
+        if #self.rooms == 0 then
+            x = math.random(padding, self.width - w - padding)
+            y = math.random(padding, self.height - h - padding)
+        else
+            local anchor = self.rooms[math.random(1, #self.rooms)]
+            local offsetX = math.random(-280, 280)
+            local offsetY = math.random(-220, 220)
+            x = math.max(padding, math.min(self.width - w - padding, anchor.cx + offsetX - w / 2))
+            y = math.max(padding, math.min(self.height - h - padding, anchor.cy + offsetY - h / 2))
+        end
 
         local overlaps = false
         local tooClose = false
@@ -100,7 +114,8 @@ function Dungeon:generateProceduralDungeon()
             local dx = (x + w / 2) - (r.x + r.w / 2)
             local dy = (y + h / 2) - (r.y + r.h / 2)
             local dist = math.sqrt(dx * dx + dy * dy)
-            if dist < math.max(110, math.min(w, h) * 0.55) then
+            local minSeparation = math.max(150, math.min(w, h) * 0.75)
+            if dist < minSeparation then
                 tooClose = true
                 break
             end
@@ -109,8 +124,9 @@ function Dungeon:generateProceduralDungeon()
             -- pick a room shape template
             local shape = "rect"
             local rrand = math.random()
-            if rrand < 0.15 then shape = "cross"
-            elseif rrand < 0.4 then shape = "L" end
+            if rrand < 0.12 then shape = "cross"
+            elseif rrand < 0.28 then shape = "L"
+            elseif rrand < 0.42 then shape = "plus" end
 
             -- carve according to shape
             if shape == "rect" then
@@ -125,6 +141,11 @@ function Dungeon:generateProceduralDungeon()
                 local cyh = math.floor(h * 0.4)
                 self:carveRoom(x + (w - cxw) / 2, y, cxw, h)
                 self:carveRoom(x, y + (h - cyh) / 2, w, cyh)
+            elseif shape == "plus" then
+                local barW = math.floor(w * 0.28)
+                local barH = math.floor(h * 0.28)
+                self:carveRoom(x + (w - barW) / 2, y, barW, h)
+                self:carveRoom(x, y + (h - barH) / 2, w, barH)
             end
 
             table.insert(self.rooms, {x = x, y = y, w = w, h = h, cx = x + w/2, cy = y + h/2, shape = shape})
@@ -136,16 +157,24 @@ function Dungeon:generateProceduralDungeon()
     -- sort rooms by center x for stable connections
     table.sort(self.rooms, function(a,b) return a.cx < b.cx end)
 
-    -- connect rooms with L-shaped corridors
+    -- connect rooms with simple orthogonal corridors that enter each room from its edge
     for i = 1, #self.rooms - 1 do
         local a = self.rooms[i]
         local b = self.rooms[i+1]
-        self:carveCorridor(a.cx, a.cy, b.cx, b.cy)
+        local sx, sy = self:getRoomConnectionPoint(a, b.cx, b.cy)
+        local ex, ey = self:getRoomConnectionPoint(b, a.cx, a.cy)
+        self:carveCorridor(sx, sy, ex, ey)
     end
 
-    -- ensure all rooms are reachable from the first room; connect any isolated rooms
-    if #self.rooms > 0 then
-        self:ensureConnectivity()
+    -- add a few extra branch corridors for a more organic, dungeon-like layout
+    for i = 1, math.max(2, math.floor(#self.rooms / 5)) do
+        local a = self.rooms[math.random(1, #self.rooms)]
+        local b = self.rooms[math.random(1, #self.rooms)]
+        if a and b and a ~= b then
+            local sx, sy = self:getRoomConnectionPoint(a, b.cx, b.cy)
+            local ex, ey = self:getRoomConnectionPoint(b, a.cx, a.cy)
+            self:carveCorridor(sx, sy, ex, ey)
+        end
     end
 
     -- enlarge first and last rooms as start/end areas when there is safe space
@@ -179,21 +208,81 @@ function Dungeon:generateProceduralDungeon()
         self:createEnderPortal(r)
     end
 
-    -- add some decorations
-    -- assign a subtle tint per room and place pillars randomly
+    -- add richer decorations and room variation to make the map feel lived-in
     for i, room in ipairs(self.rooms) do
         room.tint = {0.28 + math.random() * 0.06, 0.32 + math.random() * 0.06, 0.36 + math.random() * 0.06}
-        -- per-room accent color for rugs, puddles and subtle overlays
         room.accent = {math.max(0, room.tint[1] + (math.random()-0.5)*0.18), math.max(0, room.tint[2] + (math.random()-0.5)*0.18), math.max(0, room.tint[3] + (math.random()-0.5)*0.18)}
         room.patternSeed = math.random(1, 100000)
-        -- place 0-2 pillars
-        if math.random() > 0.6 then
-            local num = math.random(0,2)
+        if math.random() > 0.45 then
+            local num = math.random(1, 3)
             for p=1,num do
                 table.insert(self.pillars, {x = room.x + math.random(20, room.w-20), y = room.y + math.random(20, room.h-20)})
             end
         end
     end
+    self:addDecorations()
+    self:addWaterPuddles()
+    self:addProps()
+    self:addCobwebs()
+    self:addDust()
+end
+
+function Dungeon:generateTutorialDungeon(stageData)
+    local tilesX = math.floor(self.width / self.gridSize)
+    local tilesY = math.floor(self.height / self.gridSize)
+    self.tilesX = tilesX
+    self.tilesY = tilesY
+    self.walkableGrid = {}
+    for ty = 1, tilesY do
+        self.walkableGrid[ty] = {}
+        for tx = 1, tilesX do self.walkableGrid[ty][tx] = false end
+    end
+
+    self.rooms = {}
+    self.enderPortal = nil
+
+    for _, roomData in ipairs(stageData.rooms or {}) do
+        self:carveRoom(roomData.x, roomData.y, roomData.w, roomData.h)
+        table.insert(self.rooms, {
+            x = roomData.x,
+            y = roomData.y,
+            w = roomData.w,
+            h = roomData.h,
+            cx = roomData.x + roomData.w / 2,
+            cy = roomData.y + roomData.h / 2,
+            shape = "rect"
+        })
+    end
+
+    for _, connection in ipairs(stageData.connections or {}) do
+        local a = self.rooms[connection[1]]
+        local b = self.rooms[connection[2]]
+        if a and b then
+            local sx, sy = self:getRoomConnectionPoint(a, b.cx, b.cy)
+            local ex, ey = self:getRoomConnectionPoint(b, a.cx, a.cy)
+            self:carveCorridor(sx, sy, ex, ey)
+        end
+    end
+
+    self:smoothWalkableGrid(1)
+
+    if #self.rooms > 0 then
+        self:ensureConnectivity()
+    end
+
+    if stageData.exitRoom then
+        local exitRoom = self.rooms[stageData.exitRoom]
+        if exitRoom then
+            self:createEnderPortal(exitRoom)
+        end
+    end
+
+    for i, room in ipairs(self.rooms) do
+        room.tint = {0.28 + math.random() * 0.06, 0.32 + math.random() * 0.06, 0.36 + math.random() * 0.06}
+        room.accent = {math.max(0, room.tint[1] + (math.random()-0.5)*0.18), math.max(0, room.tint[2] + (math.random()-0.5)*0.18), math.max(0, room.tint[3] + (math.random()-0.5)*0.18)}
+        room.patternSeed = math.random(1, 100000)
+    end
+
     self:addDecorations()
     self:addWaterPuddles()
     self:addProps()
@@ -350,21 +439,51 @@ function Dungeon:carveRoom(x, y, w, h)
     end
 end
 
+function Dungeon:getRoomConnectionPoint(room, targetX, targetY)
+    local cx = room.x + room.w / 2
+    local cy = room.y + room.h / 2
+    local dx = targetX - cx
+    local dy = targetY - cy
+    local inset = math.max(10, math.min(room.w, room.h) * 0.18)
+
+    if math.abs(dx) > math.abs(dy) then
+        local x = dx >= 0 and (room.x + room.w - inset) or (room.x + inset)
+        return x, cy
+    end
+
+    local y = dy >= 0 and (room.y + room.h - inset) or (room.y + inset)
+    return cx, y
+end
+
 function Dungeon:carveCorridor(x1, y1, x2, y2)
-    -- carve a straight, rounded corridor between two points to avoid gaps
+    -- carve a simple orthogonal corridor between two points to avoid diagonal paths
     local corridor = self.corridorWidth or 36
     local radiusPixels = math.max(self.gridSize, corridor * 0.5)
     local sx, sy = x1, y1
     local ex, ey = x2, y2
-    local dx, dy = ex - sx, ey - sy
-    local dist = math.sqrt(dx * dx + dy * dy)
-    local step = math.max(1, self.gridSize * 0.6)
-    local steps = math.max(1, math.floor(dist / step))
-    for i = 0, steps do
-        local t = steps == 0 and 0 or (i / steps)
-        local px = sx + dx * t
-        local py = sy + dy * t
-        self:carveCircle(px, py, radiusPixels)
+
+    local function carveSegment(ax, ay, bx, by)
+        local dx, dy = bx - ax, by - ay
+        local dist = math.sqrt(dx * dx + dy * dy)
+        local step = math.max(1, self.gridSize * 0.6)
+        local steps = math.max(1, math.floor(dist / step))
+        for i = 0, steps do
+            local t = steps == 0 and 0 or (i / steps)
+            local px = ax + dx * t
+            local py = ay + dy * t
+            self:carveCircle(px, py, radiusPixels)
+        end
+    end
+
+    self:carveCircle(sx, sy, radiusPixels + self.gridSize * 2)
+    self:carveCircle(ex, ey, radiusPixels + self.gridSize * 2)
+
+    if math.abs(ex - sx) >= math.abs(ey - sy) then
+        carveSegment(sx, sy, ex, sy)
+        carveSegment(ex, sy, ex, ey)
+    else
+        carveSegment(sx, sy, sx, ey)
+        carveSegment(sx, ey, ex, ey)
     end
 end
 
@@ -559,6 +678,36 @@ function Dungeon:buildSpriteBatch()
     self.spriteBatch = nil
 end
 
+function Dungeon:cellIsWalkable(px, py)
+    local gx = math.floor(px / self.gridSize) + 1
+    local gy = math.floor(py / self.gridSize) + 1
+    return self.walkableGrid[gy] and self.walkableGrid[gy][gx]
+end
+
+function Dungeon:shouldDrawWallTile(px, py)
+    if self:cellIsWalkable(px, py) then return false end
+
+    local checks = {
+        {0, -self.gridSize},
+        {0, self.gridSize},
+        {-self.gridSize, 0},
+        {self.gridSize, 0},
+        {-self.gridSize, -self.gridSize},
+        {self.gridSize, -self.gridSize},
+        {-self.gridSize, self.gridSize},
+        {self.gridSize, self.gridSize},
+    }
+
+    local walkableNeighbors = 0
+    for _, delta in ipairs(checks) do
+        if self:cellIsWalkable(px + delta[1], py + delta[2]) then
+            walkableNeighbors = walkableNeighbors + 1
+        end
+    end
+
+    return walkableNeighbors >= 1
+end
+
 function Dungeon:buildStaticCanvas()
     if not love or not love.graphics then return end
     if self.staticCanvas then self.staticCanvas:release() end
@@ -571,29 +720,10 @@ function Dungeon:buildStaticCanvas()
 
     local function ix(v) return math.floor(v + 0.5) end
     local function quant(c) return math.floor(c * 5 + 0.5) / 5 end
-    local function cellWalkable(px, py)
-        local gx = math.floor(px / self.gridSize) + 1
-        local gy = math.floor(py / self.gridSize) + 1
-        return self.walkableGrid[gy] and self.walkableGrid[gy][gx]
-    end
     local function noise(x,y)
         return math.abs(math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1
     end
     local ts = self.tileSize
-
-    -- draw walls
-    love.graphics.setColor({quant(self.simpleWallColor[1]), quant(self.simpleWallColor[2]), quant(self.simpleWallColor[3])})
-    for ty = 0, self.simpleTilesY - 1 do
-        for tx = 0, self.simpleTilesX - 1 do
-            local px = tx * ts
-            local py = ty * ts
-            local midX = math.floor(px + ts/2)
-            local midY = math.floor(py + ts/2)
-            if not cellWalkable(midX, midY) then
-                love.graphics.rectangle("fill", ix(px), ix(py), ts, ts)
-            end
-        end
-    end
 
     -- draw room floors
     for _, room in ipairs(self.rooms) do
@@ -620,7 +750,7 @@ function Dungeon:buildStaticCanvas()
             local py = ty * ts
             local midX = math.floor(px + ts/2)
             local midY = math.floor(py + ts/2)
-            if cellWalkable(midX, midY) then
+            if self:cellIsWalkable(midX, midY) then
                 local inRoom = false
                 for _, r in ipairs(self.rooms) do
                     if midX >= r.x and midX < r.x + r.w and midY >= r.y and midY < r.y + r.h then
@@ -642,6 +772,47 @@ function Dungeon:buildStaticCanvas()
         end
     end
 
+    -- draw a continuous wall shell around every walkable room and corridor tile
+    love.graphics.setColor({quant(self.simpleWallColor[1]), quant(self.simpleWallColor[2]), quant(self.simpleWallColor[3])})
+    for ty = 0, self.simpleTilesY - 1 do
+        for tx = 0, self.simpleTilesX - 1 do
+            local px = tx * ts
+            local py = ty * ts
+            local midX = math.floor(px + ts/2)
+            local midY = math.floor(py + ts/2)
+            if self:cellIsWalkable(midX, midY) then
+                local north = not self:cellIsWalkable(midX, midY - self.gridSize)
+                local south = not self:cellIsWalkable(midX, midY + self.gridSize)
+                local west = not self:cellIsWalkable(midX - self.gridSize, midY)
+                local east = not self:cellIsWalkable(midX + self.gridSize, midY)
+
+                if north then love.graphics.rectangle("fill", ix(px), ix(py), ts, 2) end
+                if west then love.graphics.rectangle("fill", ix(px), ix(py), 2, ts) end
+                if south then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), ts, 2) end
+                if east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, ts) end
+
+                if north and west then love.graphics.rectangle("fill", ix(px), ix(py), 2, 2) end
+                if north and east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, 2) end
+                if south and west then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), 2, 2) end
+                if south and east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py + ts - 2), 2, 2) end
+            end
+        end
+    end
+
+    -- draw walls after floors so they never cover the room/corridor openings
+    love.graphics.setColor({quant(self.simpleWallColor[1]), quant(self.simpleWallColor[2]), quant(self.simpleWallColor[3])})
+    for ty = 0, self.simpleTilesY - 1 do
+        for tx = 0, self.simpleTilesX - 1 do
+            local px = tx * ts
+            local py = ty * ts
+            local midX = math.floor(px + ts/2)
+            local midY = math.floor(py + ts/2)
+            if self:shouldDrawWallTile(midX, midY) then
+                love.graphics.rectangle("fill", ix(px), ix(py), ts, ts)
+            end
+        end
+    end
+
     -- draw wall detail
     for ty = 0, self.simpleTilesY - 1 do
         for tx = 0, self.simpleTilesX - 1 do
@@ -649,11 +820,11 @@ function Dungeon:buildStaticCanvas()
             local py = ty * ts
             local midX = math.floor(px + ts/2)
             local midY = math.floor(py + ts/2)
-            if not cellWalkable(midX, midY) then
-                local north = cellWalkable(midX, midY - self.gridSize)
-                local south = cellWalkable(midX, midY + self.gridSize)
-                local west = cellWalkable(midX - self.gridSize, midY)
-                local east = cellWalkable(midX + self.gridSize, midY)
+            if self:shouldDrawWallTile(midX, midY) then
+                local north = self:cellIsWalkable(midX, midY - self.gridSize)
+                local south = self:cellIsWalkable(midX, midY + self.gridSize)
+                local west = self:cellIsWalkable(midX - self.gridSize, midY)
+                local east = self:cellIsWalkable(midX + self.gridSize, midY)
                 love.graphics.setColor(0,0,0)
                 if north then love.graphics.rectangle("fill", ix(px), ix(py), ts, 2) end
                 if west then love.graphics.rectangle("fill", ix(px), ix(py), 2, ts) end
