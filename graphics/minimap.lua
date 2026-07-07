@@ -10,8 +10,6 @@ local MINIMAP_OFFSET_X      = 20
 local CORNER_RADIUS         = 3
 
 local BLIP_PLAYER  = 10
-local BLIP_ENEMY   = 3
-local BLIP_KM      = 5
 local BLIP_COIN    = 2
 
 local COL_BG_BORDER  = { 0.10, 0.10, 0.14, 0.92 }
@@ -19,8 +17,6 @@ local COL_BG_INNER   = { 0.05, 0.05, 0.08, 0.82 }
 local COL_FLOOR      = { 0.60, 0.60, 0.60, 1.00 }
 local COL_WALL       = { 0.10, 0.08, 0.06, 0.00 }
 local COL_PLAYER     = { 0.20, 0.90, 0.30, 1.00 }
-local COL_ENEMY      = { 0.95, 0.25, 0.15, 1.00 }
-local COL_KM         = { 1.00, 0.00, 0.00, 1.00 }
 local COL_COIN       = { 1.00, 0.85, 0.15, 1.00 }
 local COL_VIEWPORT   = { 1.00, 1.00, 1.00, 0.18 }
 local COL_VP_BORDER  = { 1.00, 1.00, 1.00, 0.40 }
@@ -148,9 +144,6 @@ frameX = frameX + MINIMAP_OFFSET_X
     setCol(COL_BG_INNER)
     love.graphics.circle("fill", mapCircleX, mapCircleY, mapCircleRadius)
 
-    if font then
-        love.graphics.setFont(font)
-    end
     setCol(COL_LABEL)
     love.graphics.print("MINIMAP", frameX + MINIMAP_MARGIN, frameY + 4)
 
@@ -162,18 +155,6 @@ frameX = frameX + MINIMAP_OFFSET_X
 
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(self.mapCanvas, mapOriginX + self.offsetX, mapOriginY + self.offsetY, 0, sc, sc)
-
-    -- KM blip
-    if self.enemies then
-        for _, e in ipairs(self.enemies) do
-            if e and e.name == "KM" and e.hp and e.hp > 0 then
-                local ex = mapOriginX + self.offsetX + (e.x + (e.w or 16) / 2) * sc
-                local ey = mapOriginY + self.offsetY + (e.y + (e.h or 16) / 2) * sc
-                setCol(COL_KM)
-                love.graphics.circle("fill", ex, ey, BLIP_KM)
-            end
-        end
-    end
 
     -- Player blip
     if self.player then

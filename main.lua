@@ -6,7 +6,6 @@ local Knight   = require("knight.knight")
 local Dungeon  = require("graphics.dungeon")
 local Lighting = require("graphics.lighting")
 local Wizard   = require("wizard.wizard")
-local KM       = require("boss.km")
 local Coin     = require("collectables.coin")
 local BlueSlime  = require("Blue_slime.blue_slime")
 local RedSlime   = require("Red_slime.red_slime")
@@ -34,7 +33,6 @@ end
 gameState = "menu"
 local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses, tutorial, tutorialEnabled
 local jumpScareTimer, jumpScareDuration = 0, 2
-local caughtKM = nil
 local COINS_REQUIRED = 20
 local SPAWN_PADDING = 24
 local coinsCollected = 0
@@ -85,18 +83,10 @@ local function startGame()
     end
 
     enemies = {}
-    caughtKM = nil
 
     if tutorial and tutorial:isActive() then
         coins = {}
     else
-        local kmX, kmY = dungeon:getRightmostSpawnPoint(KM.HITBOX_W, KM.HITBOX_H, SPAWN_PADDING)
-        if kmX then
-            local boss = KM:new(kmX, kmY)
-            boss.hp = 1000
-            table.insert(enemies, boss)
-        end
-
         local slimeSpawns = dungeon:getSpawnPointsOutsideSafeRoom(18, BlueSlime.HITBOX_W, BlueSlime.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
         local slimeClasses = { BlueSlime, RedSlime, GreenSlime }
         for i, pos in ipairs(slimeSpawns) do
@@ -228,9 +218,7 @@ function love.load()
         ["knight_hurt"]      = safelyLoadImage("knight/Hurt.png"),
         ["knight_death"]     = safelyLoadImage("knight/Dead.png"),
         ["knight_defend"]    = safelyLoadImage("knight/Defend.png"),
-        ["km"]             = safelyLoadImage("boss/KM.png"),
         ["game_won"]       = safelyLoadImage("graphics/Game_Won.png"),
-        ["km_caught"]      = safelyLoadImage("boss/KM_got_you.png"),
         ["wizard_idle"]    = safelyLoadImage("wizard/Idle.png"),
         ["wizard_walk"]    = safelyLoadImage("wizard/Walk.png"),
         ["wizard_attack"]  = safelyLoadImage("wizard/Attack_1.png"),
@@ -353,8 +341,8 @@ function love.update(dt)
         tutorial:update(dt)
     end
 
-    if Effect:isHitstopActive() then return end
-
+    -- Allow the encounter to continue during hitstop so a single hit does not
+    -- freeze the player and every other enemy in the room.
     if gameState == "play" and not player then
         if tutorialEnabled and tutorial and not tutorial:isActive() then
             tutorial:start()
@@ -409,7 +397,6 @@ function love.update(dt)
                     gameState = "dead"
                     jumpScareTimer = 0
                     Audio:stop("background_music")
-                    if enemy.name == "KM" then caughtKM = enemy end
                     if #jumpScareSounds > 0 then
                         local s = jumpScareSounds[math.random(#jumpScareSounds)]
                         s:stop()
