@@ -92,12 +92,20 @@ function Dungeon:generateProceduralDungeon()
         local y = math.random(padding, self.height - h - padding)
 
         local overlaps = false
+        local tooClose = false
         for _, r in ipairs(self.rooms) do
             if self:rectsOverlap(x - padding, y - padding, w + padding*2, h + padding*2, r.x, r.y, r.w, r.h) then
                 overlaps = true; break
             end
+            local dx = (x + w / 2) - (r.x + r.w / 2)
+            local dy = (y + h / 2) - (r.y + r.h / 2)
+            local dist = math.sqrt(dx * dx + dy * dy)
+            if dist < math.max(110, math.min(w, h) * 0.55) then
+                tooClose = true
+                break
+            end
         end
-        if not overlaps then
+        if not overlaps and not tooClose then
             -- pick a room shape template
             local shape = "rect"
             local rrand = math.random()
@@ -123,6 +131,8 @@ function Dungeon:generateProceduralDungeon()
         end
     end
 
+    self:smoothWalkableGrid(1)
+
     -- sort rooms by center x for stable connections
     table.sort(self.rooms, function(a,b) return a.cx < b.cx end)
 
@@ -131,6 +141,11 @@ function Dungeon:generateProceduralDungeon()
         local a = self.rooms[i]
         local b = self.rooms[i+1]
         self:carveCorridor(a.cx, a.cy, b.cx, b.cy)
+    end
+
+    -- ensure all rooms are reachable from the first room; connect any isolated rooms
+    if #self.rooms > 0 then
+        self:ensureConnectivity()
     end
 
     -- enlarge first and last rooms as start/end areas when there is safe space
@@ -252,52 +267,178 @@ function Dungeon:canPlaceRoom(x, y, w, h, padding)
     return true
 end
 
-function Dungeon:carveRoom(x, y, w, h)
-    -- mark walkable cells in grid coordinates to align with collision map
-    local margin = 2
-    local gx1 = math.max(1, math.floor((x + margin) / self.gridSize) + 1)
-    local gy1 = math.max(1, math.floor((y + margin) / self.gridSize) + 1)
-    local gx2 = math.min(self.tilesX, math.floor((x + w - margin - 1) / self.gridSize) + 1)
-    local gy2 = math.min(self.tilesY, math.floor((y + h - margin - 1) / self.gridSize) + 1)
-    for ty = gy1, gy2 do
-        for tx = gx1, gx2 do
-            self.walkableGrid[ty][tx] = true
+function Dungeon:smoothWalkableGrid(iterations)
+    iterations = iterations or 1
+    for _ = 1, iterations do
+        local nextGrid = {}
+        for ty = 1, self.tilesY do
+            nextGrid[ty] = {}
+            for tx = 1, self.tilesX do
+                local current = self.walkableGrid[ty] and self.walkableGrid[ty][tx]
+                local walkableNeighbors = 0
+                for ny = -1, 1 do
+                    for nx = -1, 1 do
+                        if nx ~= 0 or ny ~= 0 then
+                            local gx = tx + nx
+                            local gy = ty + ny
+                            if self.walkableGrid[gy] and self.walkableGrid[gy][gx] then
+                                walkableNeighbors = walkableNeighbors + 1
+                            end
+                        end
+                    end
+                end
+                if current then
+                    nextGrid[ty][tx] = walkableNeighbors >= 2
+                else
+                    nextGrid[ty][tx] = walkableNeighbors >= 5
+                end
+            end
+        end
+        self.walkableGrid = nextGrid
+    end
+end
+
+function Dungeon:carveCircle(x, y, radiusPixels)
+    local radiusCells = math.max(1, math.ceil(radiusPixels / math.max(1, self.gridSize)))
+    local gx = math.floor(x / self.gridSize) + 1
+    local gy = math.floor(y / self.gridSize) + 1
+    local minTx = math.max(1, gx - radiusCells)
+    local maxTx = math.min(self.tilesX, gx + radiusCells)
+    local minTy = math.max(1, gy - radiusCells)
+    local maxTy = math.min(self.tilesY, gy + radiusCells)
+    local radiusSq = radiusPixels * radiusPixels
+
+    for ty = minTy, maxTy do
+        for tx = minTx, maxTx do
+            local px = (tx - 1) * self.gridSize + self.gridSize / 2
+            local py = (ty - 1) * self.gridSize + self.gridSize / 2
+            local dx = px - x
+            local dy = py - y
+            if dx * dx + dy * dy <= radiusSq then
+                self.walkableGrid[ty][tx] = true
+            end
         end
     end
 end
 
-function Dungeon:carveCorridor(x1, y1, x2, y2)
-    local corridor = self.corridorWidth or 36
-    local sx, sy = math.floor(x1), math.floor(y1)
-    local ex, ey = math.floor(x2), math.floor(y2)
-    -- carve horizontal segment: fill bounding rectangle for robustness
-    local xstart = math.min(sx, ex)
-    local xend = math.max(sx, ex)
-    local ytop = math.floor(sy - corridor/2)
-    local ybot = math.floor(sy + corridor/2)
-    local gx1 = math.max(1, math.floor(xstart / self.gridSize) + 1)
-    local gx2 = math.min(self.tilesX, math.floor((xend) / self.gridSize) + 1)
-    local gy1 = math.max(1, math.floor(ytop / self.gridSize) + 1)
-    local gy2 = math.min(self.tilesY, math.floor(ybot / self.gridSize) + 1)
+function Dungeon:carveRoom(x, y, w, h)
+    -- simple rectangular room with small rounded corners
+    local margin = 2
+    local roomX = x + margin
+    local roomY = y + margin
+    local roomW = math.max(1, w - margin * 2)
+    local roomH = math.max(1, h - margin * 2)
+    local cornerRadius = math.min(10, math.max(2, math.floor(math.min(roomW, roomH) * 0.08)))
+
+    local gx1 = math.max(1, math.floor(roomX / self.gridSize) + 1)
+    local gy1 = math.max(1, math.floor(roomY / self.gridSize) + 1)
+    local gx2 = math.min(self.tilesX, math.floor((roomX + roomW - 1) / self.gridSize) + 1)
+    local gy2 = math.min(self.tilesY, math.floor((roomY + roomH - 1) / self.gridSize) + 1)
+
     for ty = gy1, gy2 do
         for tx = gx1, gx2 do
             self.walkableGrid[ty][tx] = true
         end
     end
-    -- carve vertical segment: fill bounding rectangle
-    local ystart = math.min(sy, ey)
-    local yend = math.max(sy, ey)
-    local xleft = math.floor(ex - corridor/2)
-    local xright = math.floor(ex + corridor/2)
-    local gx1v = math.max(1, math.floor(xleft / self.gridSize) + 1)
-    local gx2v = math.min(self.tilesX, math.floor(xright / self.gridSize) + 1)
-    local gy1v = math.max(1, math.floor(ystart / self.gridSize) + 1)
-    local gy2v = math.min(self.tilesY, math.floor(yend / self.gridSize) + 1)
-    for ty = gy1v, gy2v do
-        for tx = gx1v, gx2v do
-            self.walkableGrid[ty][tx] = true
+
+    -- round corners a bit for a softer look
+    if cornerRadius > 1 then
+        self:carveCircle(roomX + cornerRadius, roomY + cornerRadius, cornerRadius)
+        self:carveCircle(roomX + roomW - cornerRadius, roomY + cornerRadius, cornerRadius)
+        self:carveCircle(roomX + cornerRadius, roomY + roomH - cornerRadius, cornerRadius)
+        self:carveCircle(roomX + roomW - cornerRadius, roomY + roomH - cornerRadius, cornerRadius)
+    end
+end
+
+function Dungeon:carveCorridor(x1, y1, x2, y2)
+    -- carve a straight, rounded corridor between two points to avoid gaps
+    local corridor = self.corridorWidth or 36
+    local radiusPixels = math.max(self.gridSize, corridor * 0.5)
+    local sx, sy = x1, y1
+    local ex, ey = x2, y2
+    local dx, dy = ex - sx, ey - sy
+    local dist = math.sqrt(dx * dx + dy * dy)
+    local step = math.max(1, self.gridSize * 0.6)
+    local steps = math.max(1, math.floor(dist / step))
+    for i = 0, steps do
+        local t = steps == 0 and 0 or (i / steps)
+        local px = sx + dx * t
+        local py = sy + dy * t
+        self:carveCircle(px, py, radiusPixels)
+    end
+end
+
+function Dungeon:ensureConnectivity()
+    -- flood-fill from first room to find reachable grid cells
+    if #self.rooms == 0 then return end
+    local visited = {}
+    for ty = 1, self.tilesY do visited[ty] = {} end
+    local q = {}
+    local first = self.rooms[1]
+    local sx = math.floor((first.cx) / self.gridSize) + 1
+    local sy = math.floor((first.cy) / self.gridSize) + 1
+    if sx < 1 or sy < 1 or sx > self.tilesX or sy > self.tilesY then return end
+    if not self.walkableGrid[sy] or not self.walkableGrid[sy][sx] then
+        -- try to find any walkable cell near the first room
+        for ty = math.max(1, sy-3), math.min(self.tilesY, sy+3) do
+            for tx = math.max(1, sx-3), math.min(self.tilesX, sx+3) do
+                if self.walkableGrid[ty] and self.walkableGrid[ty][tx] then sx, sy = tx, ty; break end
+            end
         end
     end
+    table.insert(q, {x = sx, y = sy})
+    visited[sy][sx] = true
+    local head = 1
+    while head <= #q do
+        local node = q[head]; head = head + 1
+        local nx, ny = node.x, node.y
+        local dirs = {{1,0},{-1,0},{0,1},{0,-1}}
+        for _, d in ipairs(dirs) do
+            local tx = nx + d[1]; local ty = ny + d[2]
+            if tx >= 1 and ty >= 1 and tx <= self.tilesX and ty <= self.tilesY and not visited[ty][tx] then
+                if self.walkableGrid[ty] and self.walkableGrid[ty][tx] then
+                    visited[ty][tx] = true
+                    table.insert(q, {x = tx, y = ty})
+                end
+            end
+        end
+    end
+
+    -- check rooms and connect those not reachable
+    local connected = {}
+    for i, room in ipairs(self.rooms) do
+        local gx = math.floor(room.cx / self.gridSize) + 1
+        local gy = math.floor(room.cy / self.gridSize) + 1
+        if gx >= 1 and gy >= 1 and gx <= self.tilesX and gy <= self.tilesY and visited[gy] and visited[gy][gx] then
+            connected[i] = true
+        else
+            connected[i] = false
+        end
+    end
+    -- connect unconnected rooms to nearest connected room
+    for i, room in ipairs(self.rooms) do
+        if not connected[i] then
+            local bestDist = nil; local bestIdx = nil
+            for j, ok in ipairs(connected) do
+                if ok then
+                    local dx = room.cx - self.rooms[j].cx
+                    local dy = room.cy - self.rooms[j].cy
+                    local d = dx*dx + dy*dy
+                    if not bestDist or d < bestDist then bestDist = d; bestIdx = j end
+                end
+            end
+            if bestIdx then
+                self:carveCorridor(room.cx, room.cy, self.rooms[bestIdx].cx, self.rooms[bestIdx].cy)
+                connected[i] = true
+            else
+                -- no connected rooms found; connect to first room
+                self:carveCorridor(room.cx, room.cy, self.rooms[1].cx, self.rooms[1].cy)
+                connected[i] = true
+            end
+        end
+    end
+    -- final slight smoothing to clean lone tiles
+    self:smoothWalkableGrid(1)
 end
 
 function Dungeon:addWaterPuddles()
@@ -520,6 +661,21 @@ function Dungeon:buildStaticCanvas()
                 if south then love.graphics.rectangle("fill", ix(px), ix(py + ts - 2), ts, 2) end
                 if east then love.graphics.rectangle("fill", ix(px + ts - 2), ix(py), 2, ts) end
                 if north then love.graphics.rectangle("fill", ix(px) + 1, ix(py) + 1, ts - 2, 1) end
+
+                -- extra wall detailing: moss and subtle brick lines where wall meets floor
+                local adjacent = north or south or west or east
+                if adjacent then
+                    local n = noise(tx, ty)
+                    if n > 0.88 then
+                        love.graphics.setColor(0.14, 0.28, 0.12, 0.85)
+                        love.graphics.circle("fill", ix(px + ts * (0.2 + (n - 0.88) * 0.6)), ix(py + ts * (0.2 + (n - 0.88) * 0.6)), 2)
+                    end
+                    love.graphics.setColor(0,0,0,0.06)
+                    for by = 4, ts - 4, 6 do
+                        love.graphics.rectangle("fill", ix(px + 2), ix(py + by), ts - 4, 1)
+                    end
+                end
+
                 love.graphics.setColor(1,1,1)
             end
         end
