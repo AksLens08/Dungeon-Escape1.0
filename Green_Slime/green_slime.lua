@@ -2,8 +2,8 @@
 local GreenSlime = {}
 GreenSlime.__index = GreenSlime
 
-GreenSlime.HITBOX_W = 28
-GreenSlime.HITBOX_H = 22
+GreenSlime.HITBOX_W = 36
+GreenSlime.HITBOX_H = 28
 
 function GreenSlime.new(x, y)
     local self = setmetatable({}, GreenSlime)
@@ -38,7 +38,7 @@ function GreenSlime:init(x, y)
     self.knockbackX = 0
     self.knockbackY = 0
 
-    self.targetHeight = 40
+    self.targetHeight = 48
     self.displayScale = 1.0
     self.frameWidth, self.frameHeight = 0, 0
 

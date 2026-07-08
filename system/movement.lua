@@ -7,6 +7,20 @@ local UNSTUCK_DIRS = {
     {1, 1}, {-1, 1}, {1, -1}, {-1, -1}
 }
 
+local function aabbOverlap(a, b, padding)
+    if not a or not b then return false end
+    if not a.x or not a.y or not b.x or not b.y then return false end
+    if not a.w or not a.h or not b.w or not b.h then return false end
+
+    padding = padding or 0
+    local ax1, ay1 = a.x + padding, a.y + padding
+    local ax2, ay2 = a.x + a.w - padding, a.y + a.h - padding
+    local bx1, by1 = b.x + padding, b.y + padding
+    local bx2, by2 = b.x + b.w - padding, b.y + b.h - padding
+
+    return ax1 < bx2 and bx1 < ax2 and ay1 < by2 and by1 < ay2
+end
+
 local function resolveOverlap(entity, map)
     if not map:isColliding(entity.x, entity.y, entity.w, entity.h) then
         return
@@ -83,6 +97,46 @@ local function trySlideStep(entity, map, stepX, stepY)
     end
 
     return false
+end
+
+function Movement.resolveAabbCollisions(entities, padding)
+    if not entities or #entities < 2 then return end
+
+    for i = 1, #entities do
+        local a = entities[i]
+        if a and a.x ~= nil and a.y ~= nil and a.w and a.h then
+            for j = i + 1, #entities do
+                local b = entities[j]
+                if b and b.x ~= nil and b.y ~= nil and b.w and b.h and aabbOverlap(a, b, padding) then
+                    local ax1, ay1 = a.x, a.y
+                    local ax2, ay2 = a.x + a.w, a.y + a.h
+                    local bx1, by1 = b.x, b.y
+                    local bx2, by2 = b.x + b.w, b.y + b.h
+
+                    local overlapX = math.min(ax2, bx2) - math.max(ax1, bx1)
+                    local overlapY = math.min(ay2, by2) - math.max(ay1, by1)
+
+                    if overlapX < overlapY then
+                        if ax1 < bx1 then
+                            a.x = a.x - overlapX / 2
+                            b.x = b.x + overlapX / 2
+                        else
+                            a.x = a.x + overlapX / 2
+                            b.x = b.x - overlapX / 2
+                        end
+                    else
+                        if ay1 < by1 then
+                            a.y = a.y - overlapY / 2
+                            b.y = b.y + overlapY / 2
+                        else
+                            a.y = a.y + overlapY / 2
+                            b.y = b.y - overlapY / 2
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 function Movement.moveWithCollision(entity, map, amountX, amountY)

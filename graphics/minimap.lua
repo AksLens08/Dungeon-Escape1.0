@@ -39,18 +39,19 @@ function Minimap:init(dungeon)
 end
 
 function Minimap:_buildCanvas()
-    -- Build map image
+    -- Build map image at minimap scale to avoid a huge full-resolution canvas.
     local d = self.dungeon
     if not d then return end
-    local cw = d.width
-    local ch = d.height
+    local sc = MINIMAP_SCALE_SMALL
+    local cw = math.max(1, math.floor(d.width * sc))
+    local ch = math.max(1, math.floor(d.height * sc))
     self.mapCanvas = love.graphics.newCanvas(cw, ch)
     self.mapCanvas:setFilter("nearest", "nearest")
     love.graphics.push("all")
     love.graphics.setCanvas(self.mapCanvas)
     love.graphics.clear(0, 0, 0, 0)
     love.graphics.setBlendMode("alpha")
-    local gs = d.gridSize
+    local gs = d.gridSize * sc
     for ty, row in pairs(d.collisionMap) do
         for tx, blocked in pairs(row) do
             if not blocked then
@@ -154,7 +155,7 @@ frameX = frameX + MINIMAP_OFFSET_X
     love.graphics.setStencilTest("greater", 0)
 
     love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(self.mapCanvas, mapOriginX + self.offsetX, mapOriginY + self.offsetY, 0, sc, sc)
+    love.graphics.draw(self.mapCanvas, mapOriginX + self.offsetX, mapOriginY + self.offsetY)
 
     -- Player blip
     if self.player then

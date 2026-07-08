@@ -28,7 +28,7 @@ function Tutorial:new(heroType)
             id = "intro",
             title = "First Steps",
             prompt = "Use WASD to move around the room. Left click to attack, and defeat the slime before you step through the portal.",
-            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, 1),
+            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, nil),
             enemies = {
                 {type = "blue_slime", x = 380, y = 340},
             },
@@ -38,7 +38,7 @@ function Tutorial:new(heroType)
             id = "red_slime",
             title = "Red Slime",
             prompt = "The red slime is more aggressive. Keep your footing and punish it when it commits to a charge.",
-            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, 1),
+            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, nil),
             enemies = {
                 {type = "red_slime", x = 900, y = 340},
             },
@@ -48,7 +48,7 @@ function Tutorial:new(heroType)
             id = "green_slime",
             title = "Green Slime",
             prompt = "The green slime is patient. Wait for a clean opening and strike once it gives you one.",
-            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, 1),
+            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, nil),
             enemies = {
                 {type = "green_slime", x = 380, y = 340},
             },
@@ -60,7 +60,7 @@ function Tutorial:new(heroType)
             prompt = self.heroType == "wizard"
                 and "This foe fights from range. Keep moving, time your sword swing, and press the attack when the opening appears."
                 or "This archer fights from range. Keep moving, time your attack, and punish the opening after its shot.",
-            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, 1),
+            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, nil),
             enemies = {
                 {type = "skeleton_archer", x = 900, y = 340},
             },
@@ -70,7 +70,7 @@ function Tutorial:new(heroType)
             id = "warrior",
             title = "Warrior",
             prompt = "The warrior is sturdy. Stay mobile and strike after its swings so you do not get pinned down.",
-            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, 1),
+            layout = makeLayout({makeRoom(220, 240, 320, 260)}, {}, nil),
             enemies = {
                 {type = "skeleton_warrior", x = 380, y = 340},
             },
@@ -80,7 +80,7 @@ function Tutorial:new(heroType)
             id = "spearman",
             title = "Spearman",
             prompt = "The spearman controls space with reach. Keep your movement tight and punish the moment it overcommits.",
-            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, 1),
+            layout = makeLayout({makeRoom(760, 240, 320, 260)}, {}, nil),
             enemies = {
                 {type = "skeleton_spearman", x = 900, y = 340},
             },

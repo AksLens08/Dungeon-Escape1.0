@@ -5,8 +5,8 @@ local Push = require("system.push")
 local Movement = require("system.movement")
 local SpriteAnim = require("system.sprite_anim")
 local Knight = Class.define()
-Knight.HITBOX_W = 20
-Knight.HITBOX_H = 30
+Knight.HITBOX_W = 32
+Knight.HITBOX_H = 48
 
 function Knight:init(x, y)
     -- Setup stats
@@ -33,6 +33,7 @@ function Knight:init(x, y)
     self.knockbackX = 0
     self.knockbackY = 0
 
+    self.targetHeight = 70
     self.growthTimer = 0
     self.frameWidth, self.frameHeight = 128, 128
     self.animationFrames = {}
@@ -65,7 +66,7 @@ function Knight:updateTexture()
         if not self.animationFrames then self.animationFrames = {} end
         self.animationFrames[self.state] = maxFrames
         self.frame = self.frame % maxFrames
-        self.displayScale = 60 / self.frameHeight
+        self.displayScale = self.targetHeight / self.frameHeight
         SpriteAnim.updateQuad(self)
     end
 end

@@ -16,13 +16,14 @@ local SkeletonSpearman = require("Skeleton_Spearman.skeleton_spearman")
 local Minimap  = require("graphics.minimap")
 local Spawner  = require("system.spawner")
 local Push     = require("system.push")
-local Tutorial = require("system.tutorial")
 Audio = require("Audios.audio")
+local Tutorial = require("system.tutorial")
 
 -- Modular systems
 Effect = require("system.effect")
 local Camera = require("system.camera")
 local UI = require("graphics.ui")
+local Movement = require("system.movement")
 
 -- Ensure nearest-neighbor scaling for crisp pixel art
 if love and love.graphics and love.graphics.setDefaultFilter then
@@ -31,7 +32,10 @@ end
 
 -- Game state variables
 gameState = "menu"
-local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses, tutorial, tutorialEnabled
+local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses
+local tutorialController = nil
+-- Selected dungeon index (1 = tutorial, 2 = easy, 3 = medium, 4 = hard)
+local selectedDungeonIndex = 1
 local jumpScareTimer, jumpScareDuration = 0, 2
 local COINS_REQUIRED = 20
 local SPAWN_PADDING = 24
@@ -39,17 +43,6 @@ local coinsCollected = 0
 local gameWon = false
 gTextures, gFrames, gFonts = {}, {}, {}
 gMouse = { leftDown = false, rightDown = false }
-
--- Check win condition (Coins)
-local function triggerWinIfReady()
-    if not gameWon and coinsCollected >= COINS_REQUIRED then
-        gameWon = true
-        gameState = "win"
-        Audio:stop("background_music")
-        Audio:play("victory_song")
-        Audio:stopHeartbeat()
-    end
-end
 
 -- Initialize game world
 local function startGame()
@@ -60,21 +53,58 @@ local function startGame()
     gameWon = false
     
     -- Initialize Dungeon (tileset disabled; use procedural renderer)
-    if tutorial and tutorial:isActive() then
-        local stage = tutorial:getCurrentStage()
-        dungeon = Dungeon:new(nil, 16, 40, stage.layout)
+    if selectedDungeonIndex == 1 then
+        tutorialController = Tutorial:new(selectedClass)
+        local stage = tutorialController:start()
+        dungeon = Dungeon:new(nil, 16, nil, nil, selectedDungeonIndex)
     else
-        dungeon = Dungeon:new(nil, 16)
+        dungeon = Dungeon:new(nil, 16, nil, nil, selectedDungeonIndex)
     end
     
-    local spawnX, spawnY = dungeon:getLeftmostSpawnPoint(Knight.HITBOX_W, Knight.HITBOX_H, SPAWN_PADDING)
+    local playerHitboxW = (selectedClass == "wizard") and Wizard.HITBOX_W or Knight.HITBOX_W
+    local playerHitboxH = (selectedClass == "wizard") and Wizard.HITBOX_H or Knight.HITBOX_H
+
+    local spawnX, spawnY = nil, nil
+    -- For tutorial stages, prefer a spawn point far from the portal so the player
+    -- doesn't immediately trigger the exit. Otherwise use leftmost/default.
+    if selectedDungeonIndex == 1 and dungeon and dungeon.enderPortal then
+        local bestRoom, bestDist = nil, -1
+        for _, room in ipairs(dungeon.rooms) do
+            local dx = (room.cx or (room.x + room.w/2)) - dungeon.enderPortal.x
+            local dy = (room.cy or (room.y + room.h/2)) - dungeon.enderPortal.y
+            local d = dx*dx + dy*dy
+            if d > bestDist then bestDist = d; bestRoom = room end
+        end
+        if bestRoom then
+            local bx, by = bestRoom.cx, bestRoom.cy
+            if dungeon:canFitAtCenter(bx, by, playerHitboxW, playerHitboxH, SPAWN_PADDING) then
+                spawnX, spawnY = bx, by
+            end
+        end
+    end
+
+    if dungeon and dungeon.getSpawnPointByImageColor then
+        local spawnColor = {154/255, 154/255, 154/255}
+        local cx, cy = dungeon:getSpawnPointByImageColor(playerHitboxW, playerHitboxH, SPAWN_PADDING, spawnColor)
+        if cx and cy then
+            spawnX, spawnY = cx, cy
+        end
+    end
     if not spawnX then
-        spawnX, spawnY = dungeon:getRandomSpawnPoint(Knight.HITBOX_W, Knight.HITBOX_H, SPAWN_PADDING)
+        spawnX, spawnY = dungeon:getLeftmostSpawnPoint(playerHitboxW, playerHitboxH, SPAWN_PADDING)
+    end
+    if not spawnX then
+        spawnX, spawnY = dungeon:getRandomSpawnPoint(playerHitboxW, playerHitboxH, SPAWN_PADDING)
+    end
+    if not spawnX then
+        spawnX, spawnY = dungeon.width / 2, dungeon.height / 2
     end
     if not spawnX then
         print("Warning: Could not find a walkable spawn point.")
         return
     end
+
+    spawnX, spawnY = dungeon:clampSpawnPoint(spawnX, spawnY, playerHitboxW, playerHitboxH, SPAWN_PADDING)
 
     if selectedClass == "wizard" then
         player = Wizard.new(spawnX, spawnY)
@@ -82,90 +112,118 @@ local function startGame()
         player = Knight:new(spawnX, spawnY)
     end
 
+    local spawnColor = {154/255, 154/255, 154/255}
+    local function getEnemySpawns(count, w, h)
+        if dungeon and dungeon.getSpawnPointsByImageColor then
+            local spawns = dungeon:getSpawnPointsByImageColor(count, w, h, SPAWN_PADDING, spawnColor, spawnX, spawnY)
+            if #spawns > 0 then
+                return spawns
+            end
+        end
+        return dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, SPAWN_PADDING, spawnX, spawnY)
+    end
+
     enemies = {}
 
-    if tutorial and tutorial:isActive() then
-        coins = {}
+    if selectedDungeonIndex == 1 and tutorialController and tutorialController:isActive() then
+        -- spawn tutorial-specific enemies from the current stage
+        local stage = tutorialController:getCurrentStage()
+        if stage and stage.enemies then
+            for _, e in ipairs(stage.enemies) do
+                local ex, ey = e.x or 0, e.y or 0
+                if e.type == "blue_slime" then table.insert(enemies, BlueSlime.new(ex, ey))
+                elseif e.type == "red_slime" then table.insert(enemies, RedSlime.new(ex, ey))
+                elseif e.type == "green_slime" then table.insert(enemies, GreenSlime.new(ex, ey))
+                elseif e.type == "skeleton_archer" then table.insert(enemies, SkeletonArcher:new(ex, ey))
+                elseif e.type == "skeleton_warrior" then table.insert(enemies, SkeletonWarrior:new(ex, ey))
+                elseif e.type == "skeleton_spearman" then table.insert(enemies, SkeletonSpearman:new(ex, ey))
+                end
+            end
+        end
     else
-        local slimeSpawns = dungeon:getSpawnPointsOutsideSafeRoom(18, BlueSlime.HITBOX_W, BlueSlime.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
+        local difficultyMultiplier = 1.0
+        local hpMultiplier = 1.0
+        if selectedDungeonIndex == 2 then difficultyMultiplier, hpMultiplier = 0.6, 0.9
+        elseif selectedDungeonIndex == 3 then difficultyMultiplier, hpMultiplier = 1.0, 1.0
+        elseif selectedDungeonIndex == 4 then difficultyMultiplier, hpMultiplier = 1.4, 1.25 end
+
+        local slimeCount = math.max(1, math.floor(18 * difficultyMultiplier))
+        local slimeSpawns = getEnemySpawns(slimeCount, BlueSlime.HITBOX_W, BlueSlime.HITBOX_H)
         local slimeClasses = { BlueSlime, RedSlime, GreenSlime }
         for i, pos in ipairs(slimeSpawns) do
-            local classIndex = math.min(#slimeClasses, math.floor((i - 1) / 6) + 1)
-            table.insert(enemies, slimeClasses[classIndex].new(pos.x, pos.y))
+            local classIndex = math.min(#slimeClasses, math.floor((i - 1) / math.max(1, math.floor(slimeCount / #slimeClasses))) + 1)
+            local s = slimeClasses[classIndex].new(pos.x, pos.y)
+            if s.hp then s.hp = math.floor((s.hp or 100) * hpMultiplier); s.maxHp = s.hp end
+            table.insert(enemies, s)
         end
 
-        local archerSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
+        local archerCount = math.max(1, math.floor(6 * difficultyMultiplier))
+        local archerSpawns = getEnemySpawns(archerCount, SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H)
         for _, pos in ipairs(archerSpawns) do
             local s = SkeletonArcher:new(pos.x, pos.y)
-            s.hp, s.maxHp = 250, 250
+            s.hp, s.maxHp = math.floor(250 * hpMultiplier), math.floor(250 * hpMultiplier)
             table.insert(enemies, s)
         end
 
-        local warriorSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
+        local warriorCount = math.max(1, math.floor(6 * difficultyMultiplier))
+        local warriorSpawns = getEnemySpawns(warriorCount, SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H)
         for _, pos in ipairs(warriorSpawns) do
-            table.insert(enemies, SkeletonWarrior:new(pos.x, pos.y))
+            local s = SkeletonWarrior:new(pos.x, pos.y)
+            if s.hp then s.hp = math.floor((s.hp or 200) * hpMultiplier); s.maxHp = s.hp end
+            table.insert(enemies, s)
         end
 
-        local spearmanSpawns = dungeon:getSpawnPointsOutsideSafeRoom(6, SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H, SPAWN_PADDING, spawnX, spawnY)
+        local spearmanCount = math.max(1, math.floor(6 * difficultyMultiplier))
+        local spearmanSpawns = getEnemySpawns(spearmanCount, SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H)
         for _, pos in ipairs(spearmanSpawns) do
             local s = SkeletonSpearman:new(pos.x, pos.y)
-            s.hp, s.maxHp = 250, 250
+            s.hp, s.maxHp = math.floor(250 * hpMultiplier), math.floor(250 * hpMultiplier)
             table.insert(enemies, s)
         end
+    end
 
-        coins = {}
-        local attemptedCoins = 0
-        local roomThreshold = dungeon.tileSize * 5
+    local archerSpawns = getEnemySpawns(6, SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H)
+    for _, pos in ipairs(archerSpawns) do
+        local s = SkeletonArcher:new(pos.x, pos.y)
+        s.hp, s.maxHp = 250, 250
+        table.insert(enemies, s)
+    end
 
-        while #coins < COINS_REQUIRED and attemptedCoins < COINS_REQUIRED * 10 do
-            attemptedCoins = attemptedCoins + 1
-            local x, y = Spawner.getValidSpawnPoint(dungeon, Coin.w, Coin.h, SPAWN_PADDING, 50)
-            if x and y then
-                if x > roomThreshold and x < (dungeon.width - roomThreshold) then
-                    local duplicate = false
-                    for _, coin in ipairs(coins) do
-                        if math.abs(coin.x - (x - Coin.w / 2)) < Coin.w and math.abs(coin.y - (y - Coin.h / 2)) < Coin.h then
-                            duplicate = true
-                            break
-                        end
+    local warriorSpawns = getEnemySpawns(6, SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H)
+    for _, pos in ipairs(warriorSpawns) do
+        table.insert(enemies, SkeletonWarrior:new(pos.x, pos.y))
+    end
+
+    local spearmanSpawns = getEnemySpawns(6, SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H)
+    for _, pos in ipairs(spearmanSpawns) do
+        local s = SkeletonSpearman:new(pos.x, pos.y)
+        s.hp, s.maxHp = 250, 250
+        table.insert(enemies, s)
+    end
+
+    coins = {}
+    local attemptedCoins = 0
+    local roomThreshold = dungeon.tileSize * 5
+
+    while #coins < COINS_REQUIRED and attemptedCoins < COINS_REQUIRED * 10 do
+        attemptedCoins = attemptedCoins + 1
+        local x, y = Spawner.getValidSpawnPoint(dungeon, Coin.w, Coin.h, SPAWN_PADDING, 50)
+        if x and y then
+            if x > roomThreshold and x < (dungeon.width - roomThreshold) then
+                local duplicate = false
+                for _, coin in ipairs(coins) do
+                    if math.abs(coin.x - (x - Coin.w / 2)) < Coin.w and math.abs(coin.y - (y - Coin.h / 2)) < Coin.h then
+                        duplicate = true
+                        break
                     end
-                    if not duplicate then table.insert(coins, Coin:new(x, y)) end
                 end
+                if not duplicate then table.insert(coins, Coin:new(x, y)) end
             end
         end
     end
 
     minimap = Minimap:new(dungeon)
     lighting = Lighting:new(player, dungeon)
-
-    if tutorial and tutorial:isActive() then
-        for _, enemyData in ipairs(tutorial:getCurrentStage().enemies or {}) do
-            local enemyClass
-            if enemyData.type == "blue_slime" then
-                enemyClass = BlueSlime
-            elseif enemyData.type == "red_slime" then
-                enemyClass = RedSlime
-            elseif enemyData.type == "green_slime" then
-                enemyClass = GreenSlime
-            elseif enemyData.type == "skeleton_archer" then
-                enemyClass = SkeletonArcher
-            elseif enemyData.type == "skeleton_warrior" then
-                enemyClass = SkeletonWarrior
-            elseif enemyData.type == "skeleton_spearman" then
-                enemyClass = SkeletonSpearman
-            end
-
-            if enemyClass then
-                local enemy = enemyClass.new(enemyData.x, enemyData.y)
-                if enemyData.type == "skeleton_archer" then
-                    enemy.hp, enemy.maxHp = 250, 250
-                elseif enemyData.type == "skeleton_spearman" then
-                    enemy.hp, enemy.maxHp = 250, 250
-                end
-                table.insert(enemies, enemy)
-            end
-        end
-    end
 
     -- Initialize camera
     local sw = love.graphics.getWidth()
@@ -279,95 +337,17 @@ function love.load()
     Audio:load()
     Audio:addSound("victory_song", "Audios/victory_song.mp3", "static")
 
-    tutorial = Tutorial:new(selectedClass)
-    tutorialEnabled = false
     mainMenu = Menu:new()
     Audio:play("menu_music")
 end
 
--- NEW: Check win condition (Ender Portal)
-local function tutorialStageIsClear()
-    if not tutorial or not tutorial:isActive() then return true end
-
-    local stage = tutorial:getCurrentStage()
-    if not stage or not stage.enemies or #stage.enemies == 0 then
-        return true
-    end
-
-    if not enemies then return false end
-    local alive = false
-    for _, enemy in ipairs(enemies) do
-        if enemy and enemy.hp and enemy.hp > 0 then
-            alive = true
-            break
-        end
-    end
-
-    return not alive
-end
-
-local function ensureTutorialPortal()
-    if not tutorial or not tutorial:isActive() or not dungeon or not player then return end
-    if dungeon.enderPortal and tutorialStageIsClear() then return end
-    if not tutorialStageIsClear() then return end
-
-    local stage = tutorial:getCurrentStage()
-    local portalRoom = nil
-    if stage and stage.portalRoom then
-        portalRoom = dungeon.rooms[stage.portalRoom]
-    end
-    if not portalRoom and #dungeon.rooms > 0 then
-        portalRoom = dungeon.rooms[#dungeon.rooms]
-    end
-    if portalRoom then
-        dungeon:createEnderPortal(portalRoom)
-    end
-end
-
-local function checkEnderPortal()
-    if not gameWon and dungeon and player then
-        if tutorial and tutorial:isActive() then
-            ensureTutorialPortal()
-            if not tutorialStageIsClear() then
-                return
-            end
-
-            if dungeon:playerReachedExit(player.x, player.y, 16) then
-                player = nil
-                dungeon = nil
-                tutorial:advance()
-                gameState = "play"
-                startGame()
-                Audio:stop("background_music")
-                Audio:stopHeartbeat()
-                return
-            end
-            return
-        end
-
-        if dungeon:playerReachedExit(player.x, player.y, 16) then
-            gameWon = true
-            gameState = "win"
-            Audio:stop("background_music")
-            Audio:play("victory_song")
-            Audio:stopHeartbeat()
-        end
-    end
-end
-
+-- Check win condition (Ender Portal)
 function love.update(dt)
     Effect:update(dt)
-
-    if tutorial then
-        tutorial:update(dt)
-    end
 
     -- Allow the encounter to continue during hitstop so a single hit does not
     -- freeze the player and every other enemy in the room.
     if gameState == "play" and not player then
-        if tutorialEnabled and tutorial and not tutorial:isActive() then
-            tutorial:start()
-        end
         startGame()
     end
 
@@ -397,9 +377,6 @@ function love.update(dt)
         Camera:update(dt, player)
         Audio:updateHeartbeat(dt, player, gameState)
         if lighting then lighting:update(dt) end
-
-        -- NEW: Check if player reached the Ender Portal
-        checkEnderPortal()
 
         if enemies then
             for i = #enemies, 1, -1 do
@@ -480,12 +457,21 @@ function love.update(dt)
             end
         end
 
+        if player then
+            local dynamicEntities = {player}
+            if enemies then
+                for _, enemy in ipairs(enemies) do
+                    table.insert(dynamicEntities, enemy)
+                end
+            end
+            Movement.resolveAabbCollisions(dynamicEntities, 2)
+        end
+
         local coinsBefore = player.coins
         Coin.updateAll(coins, dt, player)
         if player.coins ~= coinsBefore then
             coinsCollected = math.min(player.coins, COINS_REQUIRED)
             player.coins = coinsCollected
-            triggerWinIfReady()
         end
 
         for i = #projectiles, 1, -1 do
@@ -507,7 +493,9 @@ function love.update(dt)
                 
                 if p.owner ~= "player" then
                     local ppx, ppy = player:getCenter()
-                    if math.sqrt((p.x - ppx)^2 + (p.y - ppy)^2) < 10 and player.hp > 0 and (player.invuln or 0) <= 0 then
+                    local pdx = p.x - ppx
+                    local pdy = p.y - ppy
+                    if pdx*pdx + pdy*pdy < 100 and player.hp > 0 and (player.invuln or 0) <= 0 then
                         player:takeDamage(15, p.owner, dungeon)
                         
                         Effect:triggerHitstop(0.1)
@@ -525,7 +513,9 @@ function love.update(dt)
                         local ex, ey = e.x + (e.w or 0) / 2, e.y + (e.h or 0) / 2
                         if e.getCenter then ex, ey = e:getCenter() end
                         
-                        if math.sqrt((p.x - ex)^2 + (p.y - ey)^2) < 20 and e.hp > 0 and (e.invuln or 0) <= 0 then
+                        local pdx = p.x - ex
+                        local pdy = p.y - ey
+                        if pdx*pdx + pdy*pdy < 400 and e.hp > 0 and (e.invuln or 0) <= 0 then
                             local kbMult = (selectedClass == "wizard") and 1.5 or 1.0
                             e:takeDamage(player.damage or 40, player, dungeon, kbMult)
                             
@@ -558,7 +548,11 @@ end
 
 function love.keypressed(key)
     if key == "escape" then
-        love.event.quit()
+        if gameState == "play" then
+            isPaused = not isPaused
+        else
+            love.event.quit()
+        end
     elseif key == "p" and gameState == "play" then
         isPaused = not isPaused
     elseif key == "x" and gameState == "play" and minimap then
@@ -566,13 +560,51 @@ function love.keypressed(key)
     elseif key == "c" and gameState == "play" and player then
         coinsCollected = math.min(coinsCollected + 1, COINS_REQUIRED)
         player.coins = coinsCollected
-        triggerWinIfReady()
     end
 end
 
 function love.mousepressed(x, y, button)
     if button == 1 and not isPaused then gMouse.leftDown = true end
     if button == 2 then gMouse.rightDown = true end
+
+    if gameState == "play" and isPaused and button == 1 then
+        local sw, sh = love.graphics.getDimensions()
+        local btnW, btnH = 300, 68
+        local bx = (sw - btnW) / 2
+        local py = sh * 0.18
+        local resumeY = py + 140
+        local restartY = py + 218
+        local changeRoleY = py + 296
+        local quitY = py + 374
+
+        if UI:isWithinRect(x, y, bx, resumeY, btnW, btnH) then
+            isPaused = false
+            return
+        elseif UI:isWithinRect(x, y, bx, restartY, btnW, btnH) then
+            isPaused = false
+            player = nil
+            dungeon = nil
+            enemies = {}
+            coins = {}
+            corpses = {}
+            projectiles = {}
+            startGame()
+            return
+        elseif UI:isWithinRect(x, y, bx, changeRoleY, btnW, btnH) then
+            isPaused = false
+            gameState = "selection"
+            player = nil
+            dungeon = nil
+            enemies = {}
+            coins = {}
+            corpses = {}
+            projectiles = {}
+            return
+        elseif UI:isWithinRect(x, y, bx, quitY, btnW, btnH) then
+            love.event.quit()
+            return
+        end
+    end
 
     if gameState == "menu" and button == 1 then
         local choice = mainMenu:checkClick(x, y)
@@ -581,38 +613,36 @@ function love.mousepressed(x, y, button)
         end
     elseif gameState == "selection" and button == 1 then
         local sw, sh = love.graphics.getDimensions()
+        local diffW, diffH = 120, 50
+        local diffSpacing = 16
+        local diffX = (sw - (4 * diffW + 3 * diffSpacing)) / 2
+        local diffY = sh * 0.08 + 130
+
+        for i = 1, 4 do
+            local bx = diffX + (i - 1) * (diffW + diffSpacing)
+            if UI:isWithinRect(x, y, bx, diffY, diffW, diffH) then
+                Audio:play("button_click")
+                selectedDungeonIndex = i
+                return
+            end
+        end
+
         local btnW, btnH = 320, 82
         local bx = (sw - btnW) / 2
-        local py = sh * 0.12
+        local py = sh * 0.08
 
-        if UI:isWithinRect(x, y, bx, py + 162, btnW, btnH) then
+        if UI:isWithinRect(x, y, bx, py + 240, btnW, btnH) then
             Audio:play("button_click")
             selectedClass = "knight"
-            gameState = "tutorial_choice"
-        elseif UI:isWithinRect(x, y, bx, py + 262, btnW, btnH) then
+            gameState = "play"
+            startGame()
+        elseif UI:isWithinRect(x, y, bx, py + 340, btnW, btnH) then
             Audio:play("button_click")
             selectedClass = "wizard"
-            gameState = "tutorial_choice"
-        end
-    elseif gameState == "tutorial_choice" and button == 1 then
-        local sw, sh = love.graphics.getDimensions()
-        local btnW, btnH = 360, 82
-        local bx = (sw - btnW) / 2
-        local py = sh * 0.12
-
-        if UI:isWithinRect(x, y, bx, py + 162, btnW, btnH) then
-            Audio:play("button_click")
-            tutorialEnabled = false
-            tutorial = Tutorial:new(selectedClass)
             gameState = "play"
-        elseif UI:isWithinRect(x, y, bx, py + 262, btnW, btnH) then
-            Audio:play("button_click")
-            tutorialEnabled = true
-            tutorial = Tutorial:new(selectedClass)
-            tutorial:start()
-            gameState = "play"
+            startGame()
         end
-    elseif (gameState == "gameover" or gameState == "dead" or gameState == "win") and button == 1 then
+    elseif (gameState == "gameover" or gameState == "dead") and button == 1 then
         local sw, sh = love.graphics.getDimensions()
         local btnW, btnH = 320, 80
         local bx = (sw - btnW) / 2
@@ -620,9 +650,16 @@ function love.mousepressed(x, y, button)
 
         if UI:isWithinRect(x, y, bx, ry, btnW, btnH) then
             Audio:play("button_click")
+            Audio:stop("background_music")
             player = nil
+            dungeon = nil
+            enemies = {}
+            coins = {}
+            corpses = {}
+            projectiles = {}
             isPaused = false
-            Audio:stop("victory_song")
+            gameWon = false
+            coinsCollected = 0
             gameState = "play"
         elseif UI:isWithinRect(x, y, bx, ry + 100, btnW, btnH) then
             Audio:play("button_click")
@@ -644,11 +681,8 @@ function love.draw()
         if mainMenu then mainMenu:render() end
     elseif gameState == "selection" then
         local sw, sh = love.graphics.getDimensions()
-        UI:drawSelectionButtons(sw, sh, gFonts)
-    elseif gameState == "tutorial_choice" then
-        local sw, sh = love.graphics.getDimensions()
-        UI:drawTutorialChoiceButtons(sw, sh, gFonts)
-    elseif gameState == "play" or gameState == "dead" or gameState == "gameover" then
+        UI:drawSelectionButtons(sw, sh, gFonts, selectedDungeonIndex)
+    elseif gameState == "play" or gameState == "dead" then
         
         local sx, sy = Effect:getShakeOffset()
         local camX, camY = Camera:getPosition()
@@ -713,38 +747,23 @@ function love.draw()
 
         if player then player:drawHUD() end
         if minimap and player then minimap:draw() end
-        if gameState == "play" and tutorial and type(tutorial.drawOverlay) == "function" then
-            tutorial:drawOverlay(gFonts["hud"])
-        end
 
         if isPaused then
+            local sw, sh = love.graphics.getDimensions()
             love.graphics.setColor(0, 0, 0, 0.5)
-            love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-            love.graphics.setColor(1, 1, 1)
-            love.graphics.setFont(gFonts["title"])
-            love.graphics.printf("PAUSED", 0, love.graphics.getHeight()/2 - 60, love.graphics.getWidth(), "center")
+            love.graphics.rectangle("fill", 0, 0, sw, sh)
+            UI:drawPauseMenu(sw, sh, gFonts)
         end
     end
 
     if gameState == "dead" then
     elseif gameState == "gameover" then
+        love.graphics.setColor(0, 0, 0, 0.7)
+        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
         love.graphics.setColor(1, 0, 0, 1)
         love.graphics.setFont(gFonts["title"])
         love.graphics.printf("YOU DIED", 0, love.graphics.getHeight()*0.2, love.graphics.getWidth(), "center")
         local sw, sh = love.graphics.getDimensions()
-        UI:drawRetryQuitButtons(sw, sh, gFonts)
-    elseif gameState == "win" then
-        local img = gTextures["game_won"]
-        local sw, sh = love.graphics.getDimensions()
-        if img then
-            local iw, ih = img:getDimensions()
-            local scale = math.max(sw / iw, sh / ih)
-            love.graphics.setColor(1, 1, 1)
-            love.graphics.draw(img, sw / 2, sh / 2, 0, scale, scale, iw / 2, ih / 2)
-        end
-        love.graphics.setColor(1, 0.8, 0, 1)
-        love.graphics.setFont(gFonts["title"])
-        love.graphics.printf("VICTORY", 0, sh * 0.15, sw, "center")
         UI:drawRetryQuitButtons(sw, sh, gFonts)
     end
 end

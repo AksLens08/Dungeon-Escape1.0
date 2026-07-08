@@ -2,8 +2,8 @@
 local Slime = {}
 Slime.__index = Slime
 
-Slime.HITBOX_W = 28
-Slime.HITBOX_H = 22
+Slime.HITBOX_W = 36
+Slime.HITBOX_H = 28
 
 function Slime.new(x, y)
     local self = setmetatable({}, Slime)
@@ -38,7 +38,7 @@ function Slime:init(x, y)
     self.knockbackX = 0
     self.knockbackY = 0
 
-    self.targetHeight = 40
+    self.targetHeight = 48
     self.displayScale = 1.0
     self.frameWidth, self.frameHeight = 0, 0
 

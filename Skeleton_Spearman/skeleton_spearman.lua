@@ -2,8 +2,8 @@
 local SkeletonSpearman = {}
 SkeletonSpearman.__index = SkeletonSpearman
 
-SkeletonSpearman.HITBOX_W = 20
-SkeletonSpearman.HITBOX_H = 30
+SkeletonSpearman.HITBOX_W = 26
+SkeletonSpearman.HITBOX_H = 38
 
 function SkeletonSpearman:new(x, y)
     local self = setmetatable({}, SkeletonSpearman)
@@ -37,7 +37,7 @@ function SkeletonSpearman:new(x, y)
         death  = 0.15
     }
     
-    self.targetHeight, self.frameWidth, self.frameHeight = 50, 128, 128
+    self.targetHeight, self.frameWidth, self.frameHeight = 62, 128, 128
     self.displayScale = 1.0
     self:updateTexture()
     return self
