@@ -3,8 +3,8 @@
 local SkeletonArcher = {}
 SkeletonArcher.__index = SkeletonArcher
 
-SkeletonArcher.HITBOX_W = 26
-SkeletonArcher.HITBOX_H = 38
+SkeletonArcher.HITBOX_W = 18
+SkeletonArcher.HITBOX_H = 28
 
 function SkeletonArcher:new(x, y)
     local self = setmetatable({}, SkeletonArcher)
@@ -39,7 +39,7 @@ function SkeletonArcher:new(x, y)
         death  = 0.15
     }
     
-    self.targetHeight, self.frameWidth, self.frameHeight = 62, 128, 128
+    self.targetHeight, self.frameWidth, self.frameHeight = 48, 128, 128
     self.displayScale = 1.0
     self:updateTexture()
     return self

@@ -8,6 +8,12 @@ local function isExactColor(r, g, b, target)
     return math.abs(r - target[1]) < eps and math.abs(g - target[2]) < eps and math.abs(b - target[3]) < eps
 end
 
+local function isSimilarColor(r, g, b, target, tolerance)
+    if not target then return false end
+    tolerance = tolerance or 0.1
+    return math.abs(r - target[1]) <= tolerance and math.abs(g - target[2]) <= tolerance and math.abs(b - target[3]) <= tolerance
+end
+
 function Dungeon:init(imagePath, tileSize, corridorWidth, layout, dungeonIndex)
     self.width = 3600
     self.height = 2200
@@ -30,19 +36,10 @@ function Dungeon:init(imagePath, tileSize, corridorWidth, layout, dungeonIndex)
         self.imageData = nil
     end
     
-    -- Basic collision grid (all walkable until we generate actual values)
-    self.walkableGrid = {}
     local tilesX = math.floor(self.width / self.gridSize)
     local tilesY = math.floor(self.height / self.gridSize)
     self.tilesX = tilesX
     self.tilesY = tilesY
-    
-    for ty = 1, tilesY do
-        self.walkableGrid[ty] = {}
-        for tx = 1, tilesX do
-            self.walkableGrid[ty][tx] = true
-        end
-    end
     
     -- Rooms and spawning
     self.rooms = {{x = 0, y = 0, w = self.width, h = self.height, cx = self.width/2, cy = self.height/2}}
@@ -67,12 +64,6 @@ function Dungeon:init(imagePath, tileSize, corridorWidth, layout, dungeonIndex)
     self:buildStaticCanvas()
 end
 
-function Dungeon:cellIsWalkable(px, py)
-    local gx = math.floor(px / self.gridSize) + 1
-    local gy = math.floor(py / self.gridSize) + 1
-    return self.walkableGrid[gy] and self.walkableGrid[gy][gx]
-end
-
 function Dungeon:isColliding(x, y, w, h)
     if x < 0 or y < 0 or x + w > self.width or y + h > self.height then
         return true
@@ -93,6 +84,27 @@ function Dungeon:isColliding(x, y, w, h)
     end
 
     return false
+end
+
+function Dungeon:isAreaClear(cx, cy, w, h, padding)
+    if not cx or not cy or not w or not h then
+        return false
+    end
+
+    local halfW = w / 2
+    local halfH = h / 2
+    padding = padding or 0
+
+    local x = cx - halfW - padding
+    local y = cy - halfH - padding
+    local width = w + padding * 2
+    local height = h + padding * 2
+
+    if x < 0 or y < 0 or x + width > self.width or y + height > self.height then
+        return false
+    end
+
+    return not self:isColliding(x, y, width, height)
 end
 
 function Dungeon:hasLineOfSight(x1, y1, x2, y2)
@@ -179,11 +191,11 @@ function Dungeon:getSpawnPointByImageColor(w, h, padding, targetColor)
             if not self.collisionMap[ty] or not self.collisionMap[ty][tx] then
                 local worldX = (tx - 0.5) * self.gridSize
                 local worldY = (ty - 0.5) * self.gridSize
-                if self:canFitAtCenter(worldX, worldY, w, h, padding) then
+                if self:isAreaClear(worldX, worldY, w, h, padding) then
                     local sampleX = math.min(imgW - 1, math.max(0, math.floor(worldX / scaleX)))
                     local sampleY = math.min(imgH - 1, math.max(0, math.floor(worldY / scaleY)))
                     local r, g, b, a = self.imageData:getPixel(sampleX, sampleY)
-                    if isExactColor(r, g, b, targetColor) then
+                    if isSimilarColor(r, g, b, targetColor, 0.1) then
                         table.insert(candidates, {x = worldX, y = worldY})
                     end
                 end
@@ -221,11 +233,11 @@ function Dungeon:getSpawnPointsByImageColor(count, w, h, padding, targetColor, s
             if not self.collisionMap[ty] or not self.collisionMap[ty][tx] then
                 local worldX = (tx - 0.5) * self.gridSize
                 local worldY = (ty - 0.5) * self.gridSize
-                if self:canFitAtCenter(worldX, worldY, w, h, padding) then
+                if self:isAreaClear(worldX, worldY, w, h, padding) then
                     local sampleX = math.min(imgW - 1, math.max(0, math.floor(worldX / scaleX)))
                     local sampleY = math.min(imgH - 1, math.max(0, math.floor(worldY / scaleY)))
                     local r, g, b, a = self.imageData:getPixel(sampleX, sampleY)
-                    if isExactColor(r, g, b, targetColor) then
+                    if isSimilarColor(r, g, b, targetColor, 0.1) then
                         if not safeX or not safeY or ((worldX - safeX)^2 + (worldY - safeY)^2 > safeRadiusSq) then
                             table.insert(candidates, {x = worldX, y = worldY})
                         end
@@ -246,9 +258,6 @@ function Dungeon:getSpawnPointsByImageColor(count, w, h, padding, targetColor, s
     end
 
     return chosen
-end
-
-function Dungeon:buildSpriteBatch()
 end
 
 function Dungeon:buildStaticCanvas()
@@ -319,16 +328,23 @@ end
 function Dungeon:getLeftmostSpawnPoint(w, h, padding)
     local checkX = self.width / 2
     local checkY = self.height / 2
-    if self:canFitAtCenter(checkX, checkY, w, h, padding) then
+    if self:isAreaClear(checkX, checkY, w, h, padding) then
         return self:clampSpawnPoint(checkX, checkY, w, h, padding)
     end
-    return self:clampSpawnPoint(self.width / 2, self.height / 2, w, h, padding)
+    return self:getRandomSpawnPoint(w, h, padding)
 end
 
 function Dungeon:getRandomSpawnPoint(w, h, padding)
-    local x = self.width / 2 + math.random(-300, 300)
-    local y = self.height / 2 + math.random(-250, 250)
-    return self:clampSpawnPoint(x, y, w, h, padding)
+    local attempts = 0
+    while attempts < 50 do
+        attempts = attempts + 1
+        local x = self.width / 2 + math.random(-300, 300)
+        local y = self.height / 2 + math.random(-250, 250)
+        if self:isAreaClear(x, y, w, h, padding) then
+            return x, y
+        end
+    end
+    return self:clampSpawnPoint(self.width / 2, self.height / 2, w, h, padding)
 end
 
 function Dungeon:canFitAtCenter(cx, cy, w, h, padding)
@@ -357,7 +373,7 @@ function Dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, padding, safeX, safe
         local y = math.random(minBorder + halfH, self.height - minBorder - halfH)
         x, y = self:clampSpawnPoint(x, y, w, h, padding)
 
-        if self:canFitAtCenter(x, y, w, h, padding) then
+        if self:isAreaClear(x, y, w, h, padding) then
             if safeX and safeY then
                 local dx = x - safeX
                 local dy = y - safeY
@@ -376,10 +392,6 @@ function Dungeon:getSpawnPointsOutsideSafeRoom(count, w, h, padding, safeX, safe
     end
 
     return points
-end
-
-function Dungeon:playerReachedExit(px, py, radius)
-    return false  -- No exit portal
 end
 
 return Dungeon

@@ -1,12 +1,11 @@
 -- knight.lua
 -- Melee player
 local Class = require("system.class")
-local Push = require("system.push")
 local Movement = require("system.movement")
 local SpriteAnim = require("system.sprite_anim")
 local Knight = Class.define()
-Knight.HITBOX_W = 32
-Knight.HITBOX_H = 48
+Knight.HITBOX_W = 24
+Knight.HITBOX_H = 36
 
 function Knight:init(x, y)
     -- Setup stats
@@ -33,7 +32,7 @@ function Knight:init(x, y)
     self.knockbackX = 0
     self.knockbackY = 0
 
-    self.targetHeight = 70
+    self.targetHeight = 52
     self.growthTimer = 0
     self.frameWidth, self.frameHeight = 128, 128
     self.animationFrames = {}

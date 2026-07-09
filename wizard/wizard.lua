@@ -1,14 +1,13 @@
 -- wizard.lua
 -- Wizard player
-local Push = require("system.push")
 local Movement = require("system.movement")
 local SpriteAnim = require("system.sprite_anim")
 
 local Wizard = {}
 Wizard.__index = Wizard
 
-Wizard.HITBOX_W = 20
-Wizard.HITBOX_H = 30
+Wizard.HITBOX_W = 16
+Wizard.HITBOX_H = 24
 
 function Wizard:init(x, y)
     -- Setup stats
@@ -39,7 +38,7 @@ function Wizard:init(x, y)
     self.knockbackX = 0
     self.knockbackY = 0
 
-    self.targetHeight = 58
+    self.targetHeight = 44
     self.displayScale = 1.0
     self.frameWidth, self.frameHeight = 128, 128
     self.lightCenters = {

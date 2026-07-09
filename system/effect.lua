@@ -6,6 +6,7 @@ local hitstopTimer = 0
 local shakeTimer = 0
 local shakeMagnitude = 0
 local particles = {}
+local MAX_PARTICLES = 150
 
 function Effect:triggerHitstop(duration)
     hitstopTimer = duration or 0.05 
@@ -18,6 +19,9 @@ end
 
 function Effect:spawnParticles(x, y, color, count)
     for i = 1, (count or 8) do
+        if #particles >= MAX_PARTICLES then
+            table.remove(particles, 1)
+        end
         table.insert(particles, {
             x = x, y = y,
             vx = love.math.random(-80, 80), 

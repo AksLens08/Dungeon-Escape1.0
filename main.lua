@@ -15,7 +15,6 @@ local SkeletonWarrior = require("Skeleton_Warrior.skeleton_warrior")
 local SkeletonSpearman = require("Skeleton_Spearman.skeleton_spearman")
 local Minimap  = require("graphics.minimap")
 local Spawner  = require("system.spawner")
-local Push     = require("system.push")
 Audio = require("Audios.audio")
 local Tutorial = require("system.tutorial")
 
@@ -36,11 +35,15 @@ local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSo
 local tutorialController = nil
 -- Selected dungeon index (1 = tutorial, 2 = easy, 3 = medium, 4 = hard)
 local selectedDungeonIndex = 1
-local jumpScareTimer, jumpScareDuration = 0, 2
+local floorSpawnColors = {
+    [1] = {154/255, 154/255, 154/255},
+    [2] = {172/255, 172/255, 172/255},
+    [3] = {136/255, 136/255, 136/255},
+    [4] = {130/255, 130/255, 130/255},
+}
 local COINS_REQUIRED = 20
 local SPAWN_PADDING = 24
 local coinsCollected = 0
-local gameWon = false
 gTextures, gFrames, gFonts = {}, {}, {}
 gMouse = { leftDown = false, rightDown = false }
 
@@ -50,12 +53,11 @@ local function startGame()
     projectiles = {}
     corpses = {}
     coinsCollected = 0
-    gameWon = false
     
     -- Initialize Dungeon (tileset disabled; use procedural renderer)
     if selectedDungeonIndex == 1 then
         tutorialController = Tutorial:new(selectedClass)
-        local stage = tutorialController:start()
+        tutorialController:start()
         dungeon = Dungeon:new(nil, 16, nil, nil, selectedDungeonIndex)
     else
         dungeon = Dungeon:new(nil, 16, nil, nil, selectedDungeonIndex)
@@ -84,7 +86,7 @@ local function startGame()
     end
 
     if dungeon and dungeon.getSpawnPointByImageColor then
-        local spawnColor = {154/255, 154/255, 154/255}
+        local spawnColor = floorSpawnColors[selectedDungeonIndex] or {154/255, 154/255, 154/255}
         local cx, cy = dungeon:getSpawnPointByImageColor(playerHitboxW, playerHitboxH, SPAWN_PADDING, spawnColor)
         if cx and cy then
             spawnX, spawnY = cx, cy
@@ -114,6 +116,7 @@ local function startGame()
 
     local spawnColor = {154/255, 154/255, 154/255}
     local function getEnemySpawns(count, w, h)
+        local spawnColor = floorSpawnColors[selectedDungeonIndex] or {154/255, 154/255, 154/255}
         if dungeon and dungeon.getSpawnPointsByImageColor then
             local spawns = dungeon:getSpawnPointsByImageColor(count, w, h, SPAWN_PADDING, spawnColor, spawnX, spawnY)
             if #spawns > 0 then
@@ -180,25 +183,6 @@ local function startGame()
             s.hp, s.maxHp = math.floor(250 * hpMultiplier), math.floor(250 * hpMultiplier)
             table.insert(enemies, s)
         end
-    end
-
-    local archerSpawns = getEnemySpawns(6, SkeletonArcher.HITBOX_W, SkeletonArcher.HITBOX_H)
-    for _, pos in ipairs(archerSpawns) do
-        local s = SkeletonArcher:new(pos.x, pos.y)
-        s.hp, s.maxHp = 250, 250
-        table.insert(enemies, s)
-    end
-
-    local warriorSpawns = getEnemySpawns(6, SkeletonWarrior.HITBOX_W, SkeletonWarrior.HITBOX_H)
-    for _, pos in ipairs(warriorSpawns) do
-        table.insert(enemies, SkeletonWarrior:new(pos.x, pos.y))
-    end
-
-    local spearmanSpawns = getEnemySpawns(6, SkeletonSpearman.HITBOX_W, SkeletonSpearman.HITBOX_H)
-    for _, pos in ipairs(spearmanSpawns) do
-        local s = SkeletonSpearman:new(pos.x, pos.y)
-        s.hp, s.maxHp = 250, 250
-        table.insert(enemies, s)
     end
 
     coins = {}
@@ -332,8 +316,6 @@ function love.load()
             table.insert(jumpScareSounds, love.audio.newSource(path, "static"))
         end
     end
-    jumpScareTimer = 0
-
     Audio:load()
     Audio:addSound("victory_song", "Audios/victory_song.mp3", "static")
 
@@ -343,7 +325,12 @@ end
 
 -- Check win condition (Ender Portal)
 function love.update(dt)
+    -- Clamp dt to avoid huge jumps during window drag or load spikes.
+    if dt > 0.1 then dt = 0.1 end
     Effect:update(dt)
+
+    local hitstopActive = Effect:isHitstopActive()
+    local updateDt = hitstopActive and dt * 0.25 or dt
 
     -- Allow the encounter to continue during hitstop so a single hit does not
     -- freeze the player and every other enemy in the room.
@@ -353,8 +340,8 @@ function love.update(dt)
 
     if gameState == "dead" then
         if player then
-            player:update(dt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
-            Camera:update(dt, player)
+            player:update(updateDt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
+            Camera:update(updateDt, player)
             Audio:stopHeartbeat()
             if player.deadAnimationComplete then gameState = "gameover" end
         end
@@ -362,27 +349,27 @@ function love.update(dt)
     end
 
     if gameState == "play" and player and not isPaused then
-        if minimap then minimap:update(player, enemies, coins, {x = Camera:getPosition()}, dt) end
+        if minimap then minimap:update(player, enemies, coins, {x = Camera:getPosition()}, updateDt) end
 
         local projCountBefore = #projectiles
-        player:update(dt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
-        
+        player:update(updateDt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
+
         for i = projCountBefore + 1, #projectiles do
             local p = projectiles[i]
             if p.type ~= "arrow" and (p.owner == "player" or p.owner == player) then
                 Audio:play("fireball")
             end
         end
-        
-        Camera:update(dt, player)
+
+        Camera:update(updateDt, player)
         Audio:updateHeartbeat(dt, player, gameState)
-        if lighting then lighting:update(dt) end
+        if lighting then lighting:update(updateDt) end
 
         if enemies then
             for i = #enemies, 1, -1 do
                 local enemy = enemies[i]
                 local projectileCountBefore = #projectiles
-                enemy:update(dt, player, dungeon, projectiles)
+                enemy:update(updateDt, player, dungeon, projectiles)
                 
                 for pIdx = projectileCountBefore + 1, #projectiles do
                     local p = projectiles[pIdx]
@@ -393,7 +380,6 @@ function love.update(dt)
                 
                 if enemy.caught and gameState == "play" then
                     gameState = "dead"
-                    jumpScareTimer = 0
                     Audio:stop("background_music")
                     if #jumpScareSounds > 0 then
                         local s = jumpScareSounds[math.random(#jumpScareSounds)]
@@ -534,7 +520,6 @@ function love.update(dt)
 
         if player and player.hp <= 0 and gameState == "play" then
             gameState = "dead"
-            jumpScareTimer = 0
             Audio:stop("background_music")
             Audio:stopHeartbeat()
             
@@ -658,7 +643,6 @@ function love.mousepressed(x, y, button)
             corpses = {}
             projectiles = {}
             isPaused = false
-            gameWon = false
             coinsCollected = 0
             gameState = "play"
         elseif UI:isWithinRect(x, y, bx, ry + 100, btnW, btnH) then
@@ -756,8 +740,7 @@ function love.draw()
         end
     end
 
-    if gameState == "dead" then
-    elseif gameState == "gameover" then
+    if gameState == "gameover" then
         love.graphics.setColor(0, 0, 0, 0.7)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
         love.graphics.setColor(1, 0, 0, 1)

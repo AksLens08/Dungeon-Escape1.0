@@ -2,8 +2,8 @@
 local RedSlime = {}
 RedSlime.__index = RedSlime
 
-RedSlime.HITBOX_W = 36
-RedSlime.HITBOX_H = 28
+RedSlime.HITBOX_W = 22
+RedSlime.HITBOX_H = 18
 
 function RedSlime.new(x, y)
     local self = setmetatable({}, RedSlime)
@@ -38,7 +38,7 @@ function RedSlime:init(x, y)
     self.knockbackX = 0
     self.knockbackY = 0
 
-    self.targetHeight = 48
+    self.targetHeight = 38
     self.displayScale = 1.0
     self.frameWidth, self.frameHeight = 0, 0
 

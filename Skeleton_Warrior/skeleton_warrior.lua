@@ -2,8 +2,8 @@
 local SkeletonWarrior = {}
 SkeletonWarrior.__index = SkeletonWarrior
 
-SkeletonWarrior.HITBOX_W = 26
-SkeletonWarrior.HITBOX_H = 38
+SkeletonWarrior.HITBOX_W = 18
+SkeletonWarrior.HITBOX_H = 28
 
 function SkeletonWarrior:new(x, y)
     local self = setmetatable({}, SkeletonWarrior)
@@ -40,7 +40,7 @@ function SkeletonWarrior:new(x, y)
         death  = { frames = 4, speed = 0.15 }
     }
     
-    self.targetHeight = 62
+    self.targetHeight = 48
     self.displayScale = 1.0
     self:updateTexture()
     return self
