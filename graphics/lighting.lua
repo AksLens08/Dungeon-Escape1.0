@@ -85,18 +85,10 @@ function Lighting:render(camX, camY, scale)
     love.graphics.rectangle("fill", 0, 0, sw, sh)
     love.graphics.setStencilTest()
 
-    -- Torch core: small warm additive core a bit in front of player
-    love.graphics.setBlendMode('add')
-    love.graphics.setColor(1, 0.92, 0.45, 0.10 * flick)
-    love.graphics.circle('fill', sx + ox, sy + oy, math.max(6 * scale, radius * 0.22))
-    -- Soft warm ring (additive, then alpha rim)
-    love.graphics.setColor(1, 0.9, 0.45, 0.06 * flick)
-    love.graphics.circle('fill', sx + ox, sy + oy, radius * 0.6)
-    love.graphics.setBlendMode('alpha')
-
     -- Draw a subtle alpha rim transition between inner and outer radii
     local inner = radius * 0.55
     local outer = radius * 1.15
+    -- No additive core or inner fill: keep the center fully normal and only soft rim
     drawRimGlow(sx + ox, sy + oy, outer, inner, {1, 0.95, 0.60}, 1.0 * flick)
 end
 
