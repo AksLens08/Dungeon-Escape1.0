@@ -10,14 +10,14 @@ local MINIMAP_OFFSET_X      = 20
 local CORNER_RADIUS         = 3
 
 local BLIP_PLAYER  = 10
-local BLIP_COIN    = 2
+-- coin blip removed
 
 local COL_BG_BORDER  = { 0.10, 0.10, 0.14, 0.92 }
 local COL_BG_INNER   = { 0.05, 0.05, 0.08, 0.82 }
 local COL_FLOOR      = { 0.60, 0.60, 0.60, 1.00 }
 local COL_WALL       = { 0.10, 0.08, 0.06, 0.00 }
 local COL_PLAYER     = { 0.20, 0.90, 0.30, 1.00 }
-local COL_COIN       = { 1.00, 0.85, 0.15, 1.00 }
+local COL_COIN       = nil
 local COL_VIEWPORT   = { 1.00, 1.00, 1.00, 0.18 }
 local COL_VP_BORDER  = { 1.00, 1.00, 1.00, 0.40 }
 local COL_LABEL      = { 0.85, 0.85, 0.85, 0.85 }
@@ -66,7 +66,7 @@ function Minimap:_buildCanvas()
     love.graphics.pop()
 end
 
-function Minimap:update(player, enemies, coins, camera, dt)
+function Minimap:update(player, enemies, camera, dt)
     -- Update map data
     local d = self.dungeon
     if not d then return end

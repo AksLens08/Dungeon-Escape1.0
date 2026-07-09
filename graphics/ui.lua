@@ -34,22 +34,24 @@ local function drawButton(x, y, w, h, label, fillR, fillG, fillB, textR, textG, 
 end
 
 function UI:drawRetryQuitButtons(sw, sh, fonts)
-    local panelW, panelH = 420, 240
-    local px, py = (sw - panelW) / 2, sh * 0.32
+    local panelW, panelH = 520, 360
+    local px, py = (sw - panelW) / 2, sh * 0.28
     drawPanel(px, py, panelW, panelH, 0.09, 0.11, 0.15, 0.95, 0.72, 0.55, 0.18)
 
-    love.graphics.setFont(fonts["title"])
+    -- Panel heading: confined to the panel and use a smaller font
+    love.graphics.setFont(fonts["hud"])
     love.graphics.setColor(1, 0.9, 0.6)
-    love.graphics.printf("CONTINUE?", 0, py + 24, sw, "center")
+    love.graphics.printf("CONTINUE?", px, py + 28, panelW, "center")
 
     love.graphics.setFont(fonts["hud"])
     love.graphics.setColor(0.86, 0.86, 0.86)
-    love.graphics.printf("Choose your next move", 0, py + 96, sw, "center")
+    love.graphics.printf("Choose your next move", px, py + 84, panelW, "center")
 
-    local btnW, btnH = 280, 70
-    local bx = (sw - btnW) / 2
-    drawButton(bx, py + 124, btnW, btnH, "RETRY", 0.18, 0.26, 0.34, 1, 1, 1, 0.92, 0.74, 0.27, fonts)
-    drawButton(bx, py + 206, btnW, btnH, "QUIT", 0.26, 0.16, 0.16, 1, 1, 1, 0.9, 0.5, 0.3, fonts)
+    local btnW, btnH = 340, 84
+    local bx = px + (panelW - btnW) / 2
+    drawButton(bx, py + 140, btnW, btnH, "RETRY", 0.18, 0.26, 0.34, 1, 1, 1, 0.92, 0.74, 0.27, fonts)
+    drawButton(bx, py + 236, btnW, btnH, "QUIT", 0.26, 0.16, 0.16, 1, 1, 1, 0.9, 0.5, 0.3, fonts)
+    return px, py, panelW, panelH
 end
 
 function UI:drawPauseMenu(sw, sh, fonts)
@@ -57,13 +59,14 @@ function UI:drawPauseMenu(sw, sh, fonts)
     local px, py = (sw - panelW) / 2, sh * 0.18
     drawPanel(px, py, panelW, panelH, 0.08, 0.09, 0.12, 0.96, 0.72, 0.55, 0.18)
 
-    love.graphics.setFont(fonts["title"])
+    -- Confine heading and subtitle inside the panel to avoid overlapping
+    love.graphics.setFont(fonts["hud"])
     love.graphics.setColor(1, 0.9, 0.6)
-    love.graphics.printf("PAUSED", 0, py + 24, sw, "center")
+    love.graphics.printf("PAUSED", px, py + 20, panelW, "center")
 
     love.graphics.setFont(fonts["hud"])
     love.graphics.setColor(0.86, 0.86, 0.86)
-    love.graphics.printf("Choose an option", 0, py + 92, sw, "center")
+    love.graphics.printf("Choose an option", px, py + 64, panelW, "center")
 
     local btnW, btnH = 300, 68
     local bx = (sw - btnW) / 2

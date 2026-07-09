@@ -18,7 +18,7 @@ function Wizard:init(x, y)
     self.subType = "wizard"
     self.minimapColor = {0.7, 0.3, 1} 
 
-    self.hp, self.maxHp, self.mana, self.maxMana, self.damage, self.coins = 100, 100, 100, 100, 20, 0
+        self.hp, self.maxHp, self.mana, self.maxMana, self.damage = 100, 100, 100, 100, 20
     self.baseDamage = 20 
     self.buffTimer = 0
     self.hpRegenTimer, self.hpRegenInterval = 0, 2.5
@@ -266,6 +266,11 @@ function Wizard:update(dt, dungeon, gMouse, projectiles, camera, enemies)
         self.knockbackY = self.knockbackY * 0.85
         if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
         if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+        -- Clamp to dungeon bounds to avoid being pushed outside the level
+        if dungeon and dungeon.width and dungeon.height then
+            self.x = math.max(0, math.min(self.x, dungeon.width - self.w))
+            self.y = math.max(0, math.min(self.y, dungeon.height - self.h))
+        end
     end
 end
 
@@ -311,8 +316,8 @@ function Wizard:takeDamage(amount, attacker, dungeon)
         Effect:triggerShake(0.3, 4)
         Effect:spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
 
-        -- Juice: Apply physics knockback
-        if attacker and type(attacker) == "table" then
+        -- Juice: Apply physics knockback (only from player, not enemies)
+        if attacker and type(attacker) == "table" and attacker.type == "player" then
             local ax, ay = attacker.x, attacker.y
             if attacker.getCenter then ax, ay = attacker:getCenter() end
             
@@ -321,8 +326,8 @@ function Wizard:takeDamage(amount, attacker, dungeon)
             local dist = math.sqrt(dx*dx + dy*dy)
             
             if dist > 0 then
-                self.knockbackX = (dx / dist) * 350 -- Push strength
-                self.knockbackY = (dy / dist) * 350
+                self.knockbackX = (dx / dist) * 140
+                self.knockbackY = (dy / dist) * 140
             end
         end
     end
@@ -406,10 +411,7 @@ function Wizard:drawHUD()
     drawMedievalBar(staX, staY, self.stamina, self.maxStamina, "STAMINA", {0.2, 0.6, 0.2}, "/ " .. self.maxStamina)
 
     -- Coin Counter
-    love.graphics.setColor(0, 0, 0, 0.6)
-    love.graphics.rectangle("fill", margin, staY + barH + 15, 140, 30, 4)
-    love.graphics.setColor(0.9, 0.8, 0.5, 1)
-    love.graphics.print("COINS: " .. (self.coins or 0) .. " / 20", margin + 10, staY + barH + 20)
+        -- Coin system removed
     
     love.graphics.setLineWidth(1)
 end

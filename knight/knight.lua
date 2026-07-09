@@ -4,8 +4,8 @@ local Class = require("system.class")
 local Movement = require("system.movement")
 local SpriteAnim = require("system.sprite_anim")
 local Knight = Class.define()
-Knight.HITBOX_W = 24
-Knight.HITBOX_H = 36
+Knight.HITBOX_W = 18
+Knight.HITBOX_H = 30
 
 function Knight:init(x, y)
     -- Setup stats
@@ -13,7 +13,7 @@ function Knight:init(x, y)
     self.x = (x or 0) - self.w / 2
     self.y = (y or 0) - self.h / 2
 
-    self.hp, self.maxHp, self.armor, self.damage, self.coins = 100, 100, 100, 20, 0
+    self.hp, self.maxHp, self.armor, self.damage = 100, 100, 100, 20
     self.baseDamage, self.buffTimer = 20, 0
     self.invuln = 0
     self.hpRegenTimer = 0
@@ -215,6 +215,11 @@ function Knight:update(dt, map, gMouse)
         self.knockbackY = self.knockbackY * 0.85
         if math.abs(self.knockbackX) < 5 then self.knockbackX = 0 end
         if math.abs(self.knockbackY) < 5 then self.knockbackY = 0 end
+        -- Clamp to map bounds to avoid being pushed outside the dungeon
+        if map and map.width and map.height then
+            self.x = math.max(0, math.min(self.x, map.width - self.w))
+            self.y = math.max(0, math.min(self.y, map.height - self.h))
+        end
     end
 
     self:moveWithCollision(map, self.dx * dt, self.dy * dt)
@@ -252,8 +257,8 @@ function Knight:takeDamage(amount, attacker, dungeon)
         Effect:triggerShake(0.3, 4)
         Effect:spawnParticles(self.x + self.w/2, self.y + self.h/2, {1, 0, 0, 1}, 10)
 
-        -- Juice: Apply physics knockback
-        if attacker and type(attacker) == "table" then
+        -- Juice: Apply physics knockback (only from player, not enemies)
+        if attacker and type(attacker) == "table" and attacker.type == "player" then
             local ax, ay = attacker.x, attacker.y
             if attacker.getCenter then ax, ay = attacker:getCenter() end
             
@@ -262,8 +267,8 @@ function Knight:takeDamage(amount, attacker, dungeon)
             local dist = math.sqrt(dx*dx + dy*dy)
             
             if dist > 0 then
-                self.knockbackX = (dx / dist) * 350 -- Push strength
-                self.knockbackY = (dy / dist) * 350
+                self.knockbackX = (dx / dist) * 140
+                self.knockbackY = (dy / dist) * 140
             end
         end
     end
@@ -348,12 +353,7 @@ function Knight:drawHUD()
     local staX, staY = margin + 5, armY + barH + 35
     drawMedievalBar(staX, staY, self.stamina, self.maxStamina, "STAMINA", {0.2, 0.6, 0.2}, "/ " .. self.maxStamina)
 
-    -- Coin Counter
-    love.graphics.setColor(0, 0, 0, 0.6)
-    love.graphics.rectangle("fill", margin, staY + barH + 15, 140, 30, 4)
-    love.graphics.setColor(0.9, 0.8, 0.5, 1)
-    love.graphics.print("COINS: " .. (self.coins or 0) .. " / 20", margin + 10, staY + barH + 20)
-    
+    -- Coin system removed
     love.graphics.setLineWidth(1)
 end
 

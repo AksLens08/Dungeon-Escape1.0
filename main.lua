@@ -6,7 +6,6 @@ local Knight   = require("knight.knight")
 local Dungeon  = require("graphics.dungeon")
 local Lighting = require("graphics.lighting")
 local Wizard   = require("wizard.wizard")
-local Coin     = require("collectables.coin")
 local BlueSlime  = require("Blue_slime.blue_slime")
 local RedSlime   = require("Red_slime.red_slime")
 local GreenSlime = require("Green_slime.green_slime")
@@ -31,7 +30,7 @@ end
 
 -- Game state variables
 gameState = "menu"
-local mainMenu, player, dungeon, lighting, coins, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses
+local mainMenu, player, dungeon, lighting, isPaused, enemies, jumpScareSounds, projectiles, minimap, selectedClass, corpses
 local tutorialController = nil
 -- Selected dungeon index (1 = tutorial, 2 = easy, 3 = medium, 4 = hard)
 local selectedDungeonIndex = 1
@@ -41,9 +40,7 @@ local floorSpawnColors = {
     [3] = {136/255, 136/255, 136/255},
     [4] = {130/255, 130/255, 130/255},
 }
-local COINS_REQUIRED = 20
 local SPAWN_PADDING = 24
-local coinsCollected = 0
 gTextures, gFrames, gFonts = {}, {}, {}
 gMouse = { leftDown = false, rightDown = false }
 
@@ -52,7 +49,6 @@ local function startGame()
     if player then return end
     projectiles = {}
     corpses = {}
-    coinsCollected = 0
     
     -- Initialize Dungeon (tileset disabled; use procedural renderer)
     if selectedDungeonIndex == 1 then
@@ -185,26 +181,7 @@ local function startGame()
         end
     end
 
-    coins = {}
-    local attemptedCoins = 0
-    local roomThreshold = dungeon.tileSize * 5
-
-    while #coins < COINS_REQUIRED and attemptedCoins < COINS_REQUIRED * 10 do
-        attemptedCoins = attemptedCoins + 1
-        local x, y = Spawner.getValidSpawnPoint(dungeon, Coin.w, Coin.h, SPAWN_PADDING, 50)
-        if x and y then
-            if x > roomThreshold and x < (dungeon.width - roomThreshold) then
-                local duplicate = false
-                for _, coin in ipairs(coins) do
-                    if math.abs(coin.x - (x - Coin.w / 2)) < Coin.w and math.abs(coin.y - (y - Coin.h / 2)) < Coin.h then
-                        duplicate = true
-                        break
-                    end
-                end
-                if not duplicate then table.insert(coins, Coin:new(x, y)) end
-            end
-        end
-    end
+    -- coins removed: no collectible spawning
 
     minimap = Minimap:new(dungeon)
     lighting = Lighting:new(player, dungeon)
@@ -300,7 +277,7 @@ function love.load()
         ["skeleton_spearman_death"]  = safelyLoadImage("Skeleton_Spearman/Dead.png")
     }
 
-    Coin.load()
+    -- Coin system removed
 
     if gTextures["wizard_fire"] then
         gFrames["fireball_anim"] = {}
@@ -349,7 +326,7 @@ function love.update(dt)
     end
 
     if gameState == "play" and player and not isPaused then
-        if minimap then minimap:update(player, enemies, coins, {x = Camera:getPosition()}, updateDt) end
+        if minimap then minimap:update(player, enemies, nil, {x = Camera:getPosition()}, updateDt) end
 
         local projCountBefore = #projectiles
         player:update(updateDt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
@@ -453,12 +430,7 @@ function love.update(dt)
             Movement.resolveAabbCollisions(dynamicEntities, 2)
         end
 
-        local coinsBefore = player.coins
-        Coin.updateAll(coins, dt, player)
-        if player.coins ~= coinsBefore then
-            coinsCollected = math.min(player.coins, COINS_REQUIRED)
-            player.coins = coinsCollected
-        end
+        -- coin system removed
 
         for i = #projectiles, 1, -1 do
             local p = projectiles[i]
@@ -542,9 +514,6 @@ function love.keypressed(key)
         isPaused = not isPaused
     elseif key == "x" and gameState == "play" and minimap then
         minimap:setPositionNext()
-    elseif key == "c" and gameState == "play" and player then
-        coinsCollected = math.min(coinsCollected + 1, COINS_REQUIRED)
-        player.coins = coinsCollected
     end
 end
 
@@ -570,7 +539,6 @@ function love.mousepressed(x, y, button)
             player = nil
             dungeon = nil
             enemies = {}
-            coins = {}
             corpses = {}
             projectiles = {}
             startGame()
@@ -581,7 +549,6 @@ function love.mousepressed(x, y, button)
             player = nil
             dungeon = nil
             enemies = {}
-            coins = {}
             corpses = {}
             projectiles = {}
             return
@@ -639,11 +606,9 @@ function love.mousepressed(x, y, button)
             player = nil
             dungeon = nil
             enemies = {}
-            coins = {}
             corpses = {}
             projectiles = {}
             isPaused = false
-            coinsCollected = 0
             gameState = "play"
         elseif UI:isWithinRect(x, y, bx, ry + 100, btnW, btnH) then
             Audio:play("button_click")
@@ -676,7 +641,6 @@ function love.draw()
         love.graphics.translate(math.floor(-camX / 3 + sx + 0.5), math.floor(-camY / 3 + sy + 0.5))
 
         if dungeon and type(dungeon.render) == "function" then dungeon:render() end
-        if coins then Coin.drawAll(coins) end
 
         love.graphics.setColor(0.6, 0.6, 0.6, 0.8)
         for _, c in ipairs(corpses) do
@@ -743,10 +707,14 @@ function love.draw()
     if gameState == "gameover" then
         love.graphics.setColor(0, 0, 0, 0.7)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+        local sw, sh = love.graphics.getDimensions()
+        local px, py, pw, ph = UI:drawRetryQuitButtons(sw, sh, gFonts)
+
+        -- Draw big title above the panel to avoid overlap
         love.graphics.setColor(1, 0, 0, 1)
         love.graphics.setFont(gFonts["title"])
-        love.graphics.printf("YOU DIED", 0, love.graphics.getHeight()*0.2, love.graphics.getWidth(), "center")
-        local sw, sh = love.graphics.getDimensions()
-        UI:drawRetryQuitButtons(sw, sh, gFonts)
+        local titleH = gFonts["title"] and gFonts["title"]:getHeight() or 64
+        local titleY = math.max(10, py - titleH - 16)
+        love.graphics.printf("YOU DIED", 0, titleY, love.graphics.getWidth(), "center")
     end
 end
