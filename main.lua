@@ -326,7 +326,7 @@ function love.update(dt)
     end
 
     if gameState == "play" and player and not isPaused then
-        if minimap then minimap:update(player, enemies, nil, {x = Camera:getPosition()}, updateDt) end
+        if minimap then minimap:update(player, enemies, {x = Camera:getPosition()}, updateDt) end
 
         local projCountBefore = #projectiles
         player:update(updateDt, dungeon, gMouse, projectiles, {x = Camera:getPosition()}, enemies)
