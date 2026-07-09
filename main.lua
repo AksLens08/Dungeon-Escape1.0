@@ -198,7 +198,7 @@ local function startGame()
     Audio:resetHeartbeat()
 
     if Audio:isPlaying("menu_music") then Audio:stop("menu_music") end
-    Audio:play("background_music")
+    Audio:play("BackgroundSong")
 end
 
 function love.load()
@@ -357,7 +357,7 @@ function love.update(dt)
                 
                 if enemy.caught and gameState == "play" then
                     gameState = "dead"
-                    Audio:stop("background_music")
+                    Audio:stop("BackgroundSong")
                     if #jumpScareSounds > 0 then
                         local s = jumpScareSounds[math.random(#jumpScareSounds)]
                         s:stop()
@@ -492,7 +492,7 @@ function love.update(dt)
 
         if player and player.hp <= 0 and gameState == "play" then
             gameState = "dead"
-            Audio:stop("background_music")
+            Audio:stop("BackgroundSong")
             Audio:stopHeartbeat()
             
             if #jumpScareSounds > 0 then
@@ -602,7 +602,7 @@ function love.mousepressed(x, y, button)
 
         if UI:isWithinRect(x, y, bx, ry, btnW, btnH) then
             Audio:play("button_click")
-            Audio:stop("background_music")
+            Audio:stop("BackgroundSong")
             player = nil
             dungeon = nil
             enemies = {}

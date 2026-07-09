@@ -16,7 +16,7 @@ function Audio:load()
     sounds = {
         ["menu_music"]        = love.audio.newSource("Audios/dungeon.mp3", "stream"),
         ["dungeon_music"]     = love.audio.newSource("Audios/dungeon.mp3", "stream"),
-        ["background_music"]  = love.audio.newSource("Audios/background_music.mp3", "stream"),
+        ["BackgroundSong"]  = love.audio.newSource("Audios/BackgroundSong.mp3", "stream"),
         ["coin_collect"]      = love.audio.newSource("Audios/coin-collect.wav", "static"),
         ["button_click"]      = love.audio.newSource("Audios/click.mp3", "static"),
         ["knight_hurt"]       = love.audio.newSource("Audios/taking_damage.mp3", "static"),
@@ -31,10 +31,10 @@ function Audio:load()
     
     sounds["menu_music"]:setLooping(true)
     sounds["dungeon_music"]:setLooping(true)
-    sounds["background_music"]:setLooping(true)
+    sounds["BackgroundSong"]:setLooping(true)
     sounds["menu_music"]:setVolume(0.8)
     sounds["dungeon_music"]:setVolume(0.8)
-    sounds["background_music"]:setVolume(1.0)
+    sounds["BackgroundSong"]:setVolume(1.0)
     sounds["coin_collect"]:setVolume(0.2)
     sounds["shield_hit"]:setVolume(0.6)
     sounds["hurt"]:setVolume(0.2)
@@ -116,8 +116,8 @@ function Audio:updateHeartbeat(dt, player, gameState)
         if not heartbeatActive then
             heartbeatActive = true
             heartbeatTimer = 0
-            musicVolumeBefore = self:getVolume("background_music")
-            self:setVolume("background_music", 0.3)
+            musicVolumeBefore = self:getVolume("BackgroundSong")
+            self:setVolume("BackgroundSong", 0.3)
         end
         
         local bpm = 60 + ((0.3 - hpPercent) / 0.3) * 80
@@ -132,7 +132,7 @@ function Audio:updateHeartbeat(dt, player, gameState)
         if heartbeatActive then
             heartbeatActive = false
             heartbeatTimer = 0
-            self:setVolume("background_music", musicVolumeBefore)
+            self:setVolume("BackgroundSong", musicVolumeBefore)
         end
     end
 end
@@ -141,7 +141,7 @@ function Audio:stopHeartbeat()
     if heartbeatActive then
         heartbeatActive = false
         heartbeatTimer = 0
-        self:setVolume("background_music", musicVolumeBefore)
+        self:setVolume("BackgroundSong", musicVolumeBefore)
     end
 end
 
