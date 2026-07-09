@@ -8,25 +8,29 @@ local Lighting = Class.define()
 function Lighting:init(player)
     self.player = player
     -- darkness 1.0 = fully dark, lower values allow ambient light
-    self.darkness = 1.0
+    self.darkness = 0.95
     -- base radius in pixels (will be multiplied by scale)
-    self.baseRadius = 64
+    self.baseRadius = 40
 
     self.lightCanvas = nil
     self.canvasW, self.canvasH = 0, 0
+    -- seed for noise-based flicker
+    self.noiseSeed = (math.random and math.random() or 0.5) * 1000
 end
 
 function Lighting:update(dt)
     -- nothing to update per-frame here; flicker computed in render
 end
 
-local function drawSoftLight(x, y, radius, intensity)
-    -- smoother falloff using multiple rings
-    local steps = 8
+local function drawRimGlow(x, y, outerRadius, innerRadius, color, intensity)
+    -- Draw soft rim between innerRadius and outerRadius (leaves center untouched)
+    local steps = 12
+    local span = math.max(0.0001, outerRadius - innerRadius)
     for i = steps, 1, -1 do
-        local r = radius * (i / steps)
-        local a = intensity * (i / steps)
-        love.graphics.setColor(1, 1, 1, a)
+        local t = i / steps
+        local r = innerRadius + span * t
+        local a = (intensity or 1) * (t) * 0.03
+        love.graphics.setColor(color[1], color[2], color[3], a)
         love.graphics.circle('fill', x, y, r)
     end
 end
@@ -37,49 +41,63 @@ function Lighting:render(camX, camY, scale)
         self.lightCanvas = love.graphics.newCanvas(sw, sh)
         self.canvasW, self.canvasH = sw, sh
     end
-
-    -- Draw the player light onto the canvas using additive blending
-    love.graphics.setCanvas(self.lightCanvas)
-    love.graphics.clear(0, 0, 0, 0)
-    love.graphics.setBlendMode('add')
-
-    if self.player then
-        local time = love.timer.getTime()
-        local px, py
-        if type(self.player.getLightPosition) == 'function' then
-            px, py = self.player:getLightPosition()
-        elseif type(self.player.getCenter) == 'function' then
-            px, py = self.player:getCenter()
-        else
-            px, py = (self.player.x or 0) + (self.player.w or 0) / 2, (self.player.y or 0) + (self.player.h or 0) / 2
-        end
-
-        local sx, sy = (px * scale) - camX, (py * scale) - camY
-
-        -- flicker effect
-        local flick = 1 + (math.sin(time * 12) * 0.08) + (math.sin(time * 7.3) * 0.04)
-        local radius = self.baseRadius * scale * flick
-        local intensity = 1.0 * flick
-
-        -- central warm core
-        love.graphics.setColor(1, 0.9, 0.7, 0.9 * flick)
-        love.graphics.circle('fill', sx, sy, math.max(4 * scale, radius * 0.08))
-
-        -- soft falloff rings
-        drawSoftLight(sx, sy, radius, intensity * 0.9)
+    -- Compute player light position
+    if not self.player then return end
+    local time = love.timer.getTime()
+    local px, py
+    if type(self.player.getLightPosition) == 'function' then
+        px, py = self.player:getLightPosition()
+    elseif type(self.player.getCenter) == 'function' then
+        px, py = self.player:getCenter()
+    else
+        px, py = (self.player.x or 0) + (self.player.w or 0) / 2, (self.player.y or 0) + (self.player.h or 0) / 2
     end
 
-    love.graphics.setBlendMode('alpha')
-    love.graphics.setCanvas()
+    local sx, sy = (px * scale) - camX, (py * scale) - camY
+    -- slight forward offset to simulate torch held in front of the player
+    local faceOffset = 6 * scale
+    local ox, oy = 0, -2 * scale
+    if type(self.player.direction) == 'string' then
+        if self.player.direction == 'right' then ox = faceOffset elseif self.player.direction == 'left' then ox = -faceOffset end
+    end
 
-    -- Composite: fill screen with black, then add the light canvas
+    -- flicker: slow smooth variation (fire) + small fast sparkle
+    local slow, fast
+    if love.math and love.math.noise then
+        slow = love.math.noise(self.noiseSeed, time * 0.6)
+        fast = love.math.noise(self.noiseSeed + 100, time * 3.5)
+    else
+        slow = 0.5 + 0.5 * math.sin(time * 0.6)
+        fast = 0.5 + 0.5 * math.sin(time * 3.5)
+    end
+    -- center slow around 0 and scale: slow contributes larger, fast small sparkle
+    local flick = 1 + (slow - 0.5) * 0.28 + (fast - 0.5) * 0.08
+    local radius = self.baseRadius * scale * flick
+
+    -- Create a stencil circle marking the visible area (1 inside circle)
+    love.graphics.stencil(function()
+        love.graphics.circle("fill", sx, sy, radius)
+    end, "replace", 1)
+
+    -- Draw black rectangle only where stencil == 0 (outside the circle)
+    love.graphics.setStencilTest("equal", 0)
     love.graphics.setColor(0, 0, 0, self.darkness)
-    love.graphics.rectangle('fill', 0, 0, sw, sh)
+    love.graphics.rectangle("fill", 0, 0, sw, sh)
+    love.graphics.setStencilTest()
 
+    -- Torch core: small warm additive core a bit in front of player
     love.graphics.setBlendMode('add')
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(self.lightCanvas, 0, 0)
+    love.graphics.setColor(1, 0.92, 0.45, 0.10 * flick)
+    love.graphics.circle('fill', sx + ox, sy + oy, math.max(6 * scale, radius * 0.22))
+    -- Soft warm ring (additive, then alpha rim)
+    love.graphics.setColor(1, 0.9, 0.45, 0.06 * flick)
+    love.graphics.circle('fill', sx + ox, sy + oy, radius * 0.6)
     love.graphics.setBlendMode('alpha')
+
+    -- Draw a subtle alpha rim transition between inner and outer radii
+    local inner = radius * 0.55
+    local outer = radius * 1.15
+    drawRimGlow(sx + ox, sy + oy, outer, inner, {1, 0.95, 0.60}, 1.0 * flick)
 end
 
 return Lighting
